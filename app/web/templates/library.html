@@ -2,6 +2,17 @@
 
 {% block content %}
 
+{% if data.sonarr_enabled and data.sonarr_error %}
+<div class="banner banner-warning">
+  <span class="banner-icon" aria-hidden="true">&#9888;</span>
+  <div>
+    <strong>Sonarr couldn't be reached on the last run.</strong>
+    The Sonarr column shows &ldquo;unknown&rdquo; rather than guessing.
+    <code>{{ data.sonarr_error }}</code>
+  </div>
+</div>
+{% endif %}
+
 <section class="card">
   <div class="toolbar">
     <input class="search" type="text" id="library-search"
@@ -9,17 +20,35 @@
 
     <div class="seg" id="library-filters">
       <button data-filter="all" class="is-active">All</button>
-      <button data-filter="owned">Owned</button>
+      <button data-filter="owned">In Shoko</button>
       <button data-filter="missing">Missing</button>
       <button data-filter="roots">Missing roots</button>
+      {% if data.sonarr_available %}
+      <button data-filter="shoko-only">Shoko only</button>
+      <button data-filter="sonarr-only">Sonarr only</button>
+      <button data-filter="neither">In neither</button>
+      {% endif %}
     </div>
 
     <span class="spacer"></span>
-    <span class="meter-value">{{ stats.owned }}/{{ stats.total }} owned</span>
+    <span class="meter-value">{{ stats.owned }}/{{ stats.total }} in Shoko</span>
   </div>
 
+  {% if comparison %}
+  <p class="hint" style="margin:-4px 0 14px">
+    <strong>{{ comparison.both }}</strong> in both &middot;
+    <strong>{{ comparison.shoko_only }}</strong> only in Shoko &middot;
+    <strong>{{ comparison.sonarr_only }}</strong> only in Sonarr &middot;
+    <strong>{{ comparison.neither }}</strong> in neither
+    {% if comparison.unmapped %}
+      &middot; {{ comparison.unmapped }} with no TVDB ID in the mapping file,
+      which Sonarr can't be checked against
+    {% endif %}
+  </p>
+  {% endif %}
+
   <div class="table-wrap" data-table>
-    <table id="library-table">
+    <table id="library-table" data-sonarr="{{ '1' if data.sonarr_enabled else '' }}">
       <thead>
         <tr>
           <th scope="col">Cover</th>
@@ -27,11 +56,14 @@
           <th scope="col" class="sortable" data-type="text">Title</th>
           <th scope="col" class="sortable" data-type="num">Score</th>
           <th scope="col" class="sortable" data-type="num">Popularity</th>
-          <th scope="col" class="sortable" data-type="text">Status</th>
+          <th scope="col" class="sortable" data-type="text">Shoko</th>
+          {% if data.sonarr_enabled %}
+          <th scope="col" class="sortable" data-type="text">Sonarr</th>
+          {% endif %}
         </tr>
       </thead>
       <tbody id="library-body">
-        <tr><td colspan="6"><p class="empty-state">Loading...</p></td></tr>
+        <tr><td colspan="7"><p class="empty-state">Loading...</p></td></tr>
       </tbody>
     </table>
   </div>

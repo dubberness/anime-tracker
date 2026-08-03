@@ -12,6 +12,7 @@ results.json
 history.db
 anime_ids.json
 output/
+dev-config/
 
 # Python
 __pycache__/

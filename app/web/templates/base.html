@@ -25,6 +25,10 @@
          href="{{ url_for('library') }}">
         <span class="nav-icon" aria-hidden="true">&#9776;</span> Library
       </a>
+      <a class="nav-item {% if request.endpoint == 'seasons_page' %}is-active{% endif %}"
+         href="{{ url_for('seasons_page') }}">
+        <span class="nav-icon" aria-hidden="true">&#9788;</span> Seasons
+      </a>
       <a class="nav-item {% if request.endpoint == 'migration' %}is-active{% endif %}"
          href="{{ url_for('migration') }}">
         <span class="nav-icon" aria-hidden="true">&#8646;</span> Migration

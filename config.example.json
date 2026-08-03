@@ -26,6 +26,7 @@
     "run_on_start": true
   },
   "ui": {
-    "tiers": [100, 250, 500, 1000]
+    "tiers": [100, 250, 500, 1000],
+    "season_limit": 20
   }
 }

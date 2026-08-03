@@ -64,6 +64,54 @@
     return Number(value).toLocaleString();
   }
 
+  // Mirrors the SONARR_* constants in core/models.py.
+  const SONARR_PILLS = {
+    owned:    '<span class="pill pill-good">&#10003; In Sonarr</span>',
+    wanted:   '<span class="pill pill-warn" title="Sonarr has the series but no episode files for it">Monitored</span>',
+    missing:  '<span class="pill pill-muted">Not in Sonarr</span>',
+    unmapped: '<span class="pill pill-muted" title="No TVDB ID in the mapping file - Sonarr can\'t be checked">No TVDB ID</span>',
+    unknown:  '<span class="pill pill-muted">&mdash;</span>'
+  };
+
+  /* One row shape shared by the library and seasons tables - both are the same
+     "an AniList entry, and where it lives" list. */
+  function entryRow(entry, withSonarr) {
+    const mal = entry.mal_id
+      ? `<a class="sub-link" href="https://myanimelist.net/anime/${escapeHtml(entry.mal_id)}" target="_blank" rel="noopener">MAL</a>
+         <span class="sub-link">&middot;</span>`
+      : "";
+
+    const sonarr = withSonarr
+      ? `<td>${SONARR_PILLS[entry.sonarr_status] || SONARR_PILLS.unknown}</td>`
+      : "";
+
+    return `
+      <tr>
+        <td><img class="cover" src="${escapeHtml(entry.image)}" alt="" loading="lazy"></td>
+        <td class="num">#${entry.rank}</td>
+        <td class="title">
+          <a href="https://anilist.co/anime/${entry.anilist_id}" target="_blank" rel="noopener">${escapeHtml(entry.title)}</a>
+          <div>
+            ${mal}
+            <a class="sub-link" href="https://nyaa.si/?f=0&c=0_0&q=${encodeURIComponent(entry.title)}&s=seeders&o=desc" target="_blank" rel="noopener">Search</a>
+            ${entry.is_franchise_root ? '<span class="sub-link">&middot; root</span>' : ""}
+          </div>
+        </td>
+        <td class="num">${entry.score || "-"}</td>
+        <td class="num">${formatNumber(entry.popularity)}</td>
+        <td>${entry.owned
+          ? '<span class="pill pill-good">&#10003; In Shoko</span>'
+          : '<span class="pill pill-muted">Missing</span>'}</td>
+        ${sonarr}
+      </tr>
+    `;
+  }
+
+  function tableMessage(table, text) {
+    const columns = table ? table.tHead.rows[0].cells.length : 7;
+    return `<tr><td colspan="${columns}"><p class="empty-state">${escapeHtml(text)}</p></td></tr>`;
+  }
+
   function formatDateTime(iso) {
     if (!iso) return "-";
     const date = new Date(iso);
@@ -370,16 +418,20 @@
     pageSize: 50,
     filter: "all",
     query: "",
+    sonarr: false,
 
     async init() {
       const host = $("#library-body");
       if (!host) return;
 
+      const table = $("#library-table");
+      this.sonarr = !!(table && table.dataset.sonarr);
+
       try {
         const data = await api("/api/results");
         this.entries = data.entries || [];
       } catch (err) {
-        host.innerHTML = `<tr><td colspan="6" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
+        host.innerHTML = tableMessage(table, err.message);
         return;
       }
 
@@ -416,11 +468,29 @@
       this.apply();
     },
 
+    /* "In neither" deliberately excludes entries whose Sonarr state is
+       unknown or unmapped - we can't claim a show is in neither library when
+       one of the two answers is missing. */
+    matches(entry) {
+      const inShoko = entry.owned;
+      const inSonarr = entry.sonarr_status === "owned";
+      const sonarrKnown = entry.sonarr_status !== "unknown" &&
+                          entry.sonarr_status !== "unmapped";
+
+      switch (this.filter) {
+        case "owned":       return inShoko;
+        case "missing":     return !inShoko;
+        case "roots":       return !inShoko && entry.is_franchise_root;
+        case "shoko-only":  return inShoko && !inSonarr && sonarrKnown;
+        case "sonarr-only": return !inShoko && inSonarr;
+        case "neither":     return !inShoko && !inSonarr && sonarrKnown;
+        default:            return true;
+      }
+    },
+
     apply() {
       this.filtered = this.entries.filter(entry => {
-        if (this.filter === "owned" && !entry.owned) return false;
-        if (this.filter === "missing" && entry.owned) return false;
-        if (this.filter === "roots" && (entry.owned || !entry.is_franchise_root)) return false;
+        if (!this.matches(entry)) return false;
         if (this.query && entry.title.toLowerCase().indexOf(this.query) === -1) return false;
         return true;
       });
@@ -435,28 +505,9 @@
       const slice = this.filtered.slice(start, start + this.pageSize);
 
       if (!slice.length) {
-        body.innerHTML = '<tr><td colspan="6"><p class="empty-state">Nothing matches those filters.</p></td></tr>';
+        body.innerHTML = tableMessage($("#library-table"), "Nothing matches those filters.");
       } else {
-        body.innerHTML = slice.map(entry => `
-          <tr>
-            <td><img class="cover" src="${escapeHtml(entry.image)}" alt="" loading="lazy"></td>
-            <td class="num">#${entry.rank}</td>
-            <td class="title">
-              <a href="https://anilist.co/anime/${entry.anilist_id}" target="_blank" rel="noopener">${escapeHtml(entry.title)}</a>
-              <div>
-                <a class="sub-link" href="https://myanimelist.net/anime/${escapeHtml(entry.mal_id)}" target="_blank" rel="noopener">MAL</a>
-                <span class="sub-link">&middot;</span>
-                <a class="sub-link" href="https://nyaa.si/?f=0&c=0_0&q=${encodeURIComponent(entry.title)}&s=seeders&o=desc" target="_blank" rel="noopener">Search</a>
-                ${entry.is_franchise_root ? '<span class="sub-link">&middot; root</span>' : ""}
-              </div>
-            </td>
-            <td class="num">${entry.score || "-"}</td>
-            <td class="num">${formatNumber(entry.popularity)}</td>
-            <td>${entry.owned
-              ? '<span class="pill pill-good">&#10003; Owned</span>'
-              : '<span class="pill pill-muted">Missing</span>'}</td>
-          </tr>
-        `).join("");
+        body.innerHTML = slice.map(entry => entryRow(entry, this.sonarr)).join("");
       }
 
       const info = $("#page-info");
@@ -471,6 +522,78 @@
       const next = $("#page-next");
       if (prev) prev.disabled = this.page === 0;
       if (next) next.disabled = (this.page + 1) * this.pageSize >= this.filtered.length;
+    }
+  };
+
+  // ==========================
+  // Seasons page
+  // ==========================
+
+  /* Every season and every ranking is already in the page as JSON - the run
+     fetched all of it - so switching tabs is a re-render, not a request. */
+  const Seasons = {
+    blocks: [],
+    index: 0,
+    sort: "popularity",
+    sonarr: false,
+
+    init() {
+      const body = $("#season-body");
+      const source = $("#season-data");
+      if (!body || !source) return;
+
+      const table = $("#season-table");
+      this.sonarr = !!(table && table.dataset.sonarr);
+
+      try {
+        this.blocks = JSON.parse(source.textContent) || [];
+      } catch (err) {
+        body.innerHTML = tableMessage(table, "The seasonal data could not be read.");
+        return;
+      }
+
+      const active = $("#season-tabs button.is-active");
+      this.index = active ? Number(active.dataset.season) : 0;
+
+      this.bind("#season-tabs", button => {
+        this.index = Number(button.dataset.season);
+      });
+      this.bind("#season-sorts", button => {
+        this.sort = button.dataset.sort;
+      });
+
+      this.render();
+    },
+
+    bind(selector, apply) {
+      $$(`${selector} button`).forEach(button => {
+        button.addEventListener("click", () => {
+          $$(`${selector} button`).forEach(b => b.classList.remove("is-active"));
+          button.classList.add("is-active");
+          apply(button);
+          this.render();
+        });
+      });
+    },
+
+    render() {
+      const body = $("#season-body");
+      if (!body) return;
+
+      const block = this.blocks[this.index] || {};
+      const entries = (block.sorts && block.sorts[this.sort]) || [];
+
+      body.innerHTML = entries.length
+        ? entries.map(entry => entryRow(entry, this.sonarr)).join("")
+        : tableMessage($("#season-table"), "AniList has nothing listed for this season yet.");
+
+      const summary = $("#season-summary");
+      if (summary) {
+        const owned = entries.filter(e => e.owned).length;
+        summary.textContent = entries.length
+          ? `${owned}/${entries.length} in Shoko`
+          : "";
+      }
     }
   };
 
@@ -688,6 +811,7 @@
     Settings.init();
     Logs.init();
     Library.init();
+    Seasons.init();
 
     $$("[data-table]").forEach(el => DataTable.init(el));
 

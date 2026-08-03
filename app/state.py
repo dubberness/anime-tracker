@@ -12,8 +12,9 @@ PHASES = [
     "mappings",
     "anilist",
     "shoko",
-    "compare",
     "sonarr",
+    "compare",
+    "seasons",
     "persist",
 ]
 

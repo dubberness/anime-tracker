@@ -94,6 +94,7 @@ class ScheduleSettings:
 class UISettings:
     tiers: List[int] = field(default_factory=lambda: [100, 250, 500, 1000])
     history_points: int = 60
+    season_limit: int = 20
 
 
 @dataclass
@@ -501,6 +502,10 @@ def validate(settings: Settings):
 
     if settings.anilist.sort not in VALID_SORTS:
         raise ValidationError(f"Unknown sort order: {settings.anilist.sort}")
+
+    # AniList caps perPage at 50, and the seasons page asks for one page.
+    if not 1 <= settings.ui.season_limit <= 50:
+        raise ValidationError("Shows per season must be between 1 and 50")
 
     tiers = [t for t in settings.ui.tiers if isinstance(t, int) and t > 0]
     if not tiers:

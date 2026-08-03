@@ -1,12 +1,14 @@
 """The tracking run itself: fetch, compare, persist."""
 
 import threading
+import time
 import traceback
-from datetime import datetime
+from datetime import date, datetime
 
 from clients import AniListClient, ShokoClient, SonarrClient
 from clients import mappings as mapping_client
 from core import compare
+from core import seasons as season_mod
 from core import stats as stats_mod
 from logging_setup import get_logger
 
@@ -96,6 +98,50 @@ class Runner:
             self.state.finish(error=error)
             self.storage.prune()
 
+    def _build_seasons(self, client, settings, mappings, mal_ids, anidb_ids,
+                       sonarr_index, sonarr_available, previous_seasons):
+        """Ranked charts for the current season and the one either side.
+
+        A failure here keeps the previous run's charts rather than blanking the
+        page: the seasonal view is a bonus on top of the run, not its point,
+        and an empty table reads as "nothing airing" rather than "fetch failed".
+        """
+        limit = settings.ui.season_limit
+        today = date.today()
+        current = (season_mod.season_of(today), today.year)
+        blocks = []
+
+        for index, (season, year) in enumerate(season_mod.window(today)):
+            if index:
+                time.sleep(settings.anilist.request_delay_ms / 1000)
+
+            try:
+                ranked = client.fetch_season(season, year, per_page=limit)
+            except Exception as exc:  # noqa: BLE001 - seasonal data is optional
+                log.error("Seasonal fetch failed for %s %s (%s) - keeping the "
+                          "previous charts", season, year, exc)
+                return previous_seasons or []
+
+            blocks.append({
+                "season": season,
+                "year": year,
+                "label": season_mod.label(season, year),
+                "is_current": (season, year) == current,
+                "sorts": {
+                    key: [
+                        entry.to_dict() for entry in compare.build_season_entries(
+                            media, mappings, mal_ids, anidb_ids,
+                            sonarr_index, sonarr_available, limit,
+                        )
+                    ]
+                    for key, media in ranked.items()
+                },
+            })
+
+        log.info("Seasonal charts built for %s",
+                 ", ".join(block["label"] for block in blocks))
+        return blocks
+
     def _execute(self, run_id, started):
         settings = self.config.settings
 
@@ -129,40 +175,58 @@ class Runner:
         mal_ids, anidb_ids, tvdb_ids = compare.extract_shoko_ids(shoko_series)
         shoko_episodes, episodes_suspect = compare.count_shoko_episodes(shoko_series)
 
+        # ---- Sonarr ----
+        # Ahead of the comparison so every tracked entry can carry its Sonarr
+        # status, not just the migration table.
+        sonarr_series = []
+        sonarr_results = []
+        sonarr_index = {}
+        sonarr_error = None
+        sonarr_enabled = bool(settings.sonarr.configured)
+
+        if sonarr_enabled:
+            self.state.set_phase("sonarr", "Reading the Sonarr library")
+            try:
+                sonarr_client = SonarrClient(settings.sonarr, network)
+                sonarr_series = sonarr_client.fetch_series()
+                sonarr_index = compare.build_sonarr_index(sonarr_series)
+                sonarr_results = compare.compare_sonarr(sonarr_series, tvdb_ids)
+            except Exception as exc:  # noqa: BLE001 - Sonarr is optional
+                sonarr_error = str(exc)
+                log.error("Sonarr fetch failed, continuing without it: %s", exc)
+        else:
+            log.info("Sonarr not configured - skipping the Sonarr comparison")
+
+        # Configured but unreachable has to read as "unknown" rather than
+        # "missing", or a dead Sonarr looks like an empty one.
+        sonarr_available = sonarr_enabled and sonarr_error is None
+
         # ---- compare ----
         self.state.set_phase("compare", "Matching against your library")
         results = compare.compare_collections(
-            anilist, mapping_lookup, mal_ids, anidb_ids, settings.anilist
+            anilist, mapping_lookup, mal_ids, anidb_ids, settings.anilist,
+            sonarr_index, sonarr_available,
         )
 
         stats = stats_mod.build_stats(results)
         tiers = stats_mod.build_tiers(results, settings.ui.tiers)
         decades = stats_mod.build_decade_breakdown(results)
         genres = stats_mod.build_genre_breakdown(results)
+        comparison = stats_mod.build_comparison(results, sonarr_available)
 
         previous = self.storage.load_results() or {}
         diff = stats_mod.build_diff(results, previous.get("entries"))
 
-        # ---- Sonarr ----
-        sonarr_series = []
-        sonarr_results = []
-        sonarr_error = None
-
-        if settings.sonarr.configured:
-            self.state.set_phase("sonarr", "Reading the Sonarr library")
-            try:
-                sonarr_client = SonarrClient(settings.sonarr, network)
-                sonarr_series = sonarr_client.fetch_series()
-                sonarr_results = compare.compare_sonarr(sonarr_series, tvdb_ids)
-            except Exception as exc:  # noqa: BLE001 - Sonarr is optional
-                sonarr_error = str(exc)
-                log.error("Sonarr fetch failed, continuing without it: %s", exc)
-        else:
-            log.info("Sonarr not configured - skipping the migration comparison")
-
         migration = stats_mod.build_migration_stats(sonarr_results)
         totals = stats_mod.build_library_totals(
             shoko_series, sonarr_series, shoko_episodes, episodes_suspect
+        )
+
+        # ---- seasons ----
+        self.state.set_phase("seasons", "Fetching the seasonal charts")
+        seasons = self._build_seasons(
+            anilist_client, settings, mapping_lookup, mal_ids, anidb_ids,
+            sonarr_index, sonarr_available, previous.get("seasons"),
         )
 
         # ---- persist ----
@@ -181,7 +245,10 @@ class Runner:
             "diff": diff.to_dict(),
             "migration": migration,
             "totals": totals,
-            "sonarr_enabled": bool(settings.sonarr.configured),
+            "comparison": comparison,
+            "seasons": seasons,
+            "sonarr_enabled": sonarr_enabled,
+            "sonarr_available": sonarr_available,
             "sonarr_error": sonarr_error,
         }
 

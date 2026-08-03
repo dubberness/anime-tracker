@@ -5,12 +5,17 @@ A self-hosted web app that compares an AniList ranked list against your
 migration. Runs on a schedule in Docker, with a built-in dashboard and
 settings UI.
 
-![version](https://img.shields.io/badge/version-4.0-blue)
+![version](https://img.shields.io/badge/version-4.1-blue)
 
 ## What it does
 
 - **Collection tracking** — how much of the AniList top *N* you actually own,
   broken down by rank tier, decade and genre.
+- **Two libraries side by side** — every tracked show carries both its Shoko
+  and its Sonarr status, so "in Shoko only", "in Sonarr only" and "in neither"
+  are one click apart.
+- **Seasonal charts** — the top shows of this season and the one either side,
+  with the same Shoko/Sonarr status on each.
 - **Recommendations** — the highest-value things you're missing, filtered to
   franchise roots so sequels don't clutter the list.
 - **Migration tracking** — which Sonarr series are already in Shoko, matched on
@@ -71,6 +76,7 @@ All settings live in `/config/config.json` and are editable from the
 | How many | `1000` | How far down the list to track |
 | Minimum popularity | `50000` | Skips obscure entries |
 | Tiers | `100, 250, 500, 1000` | Rank tiers for the progress bars |
+| Shows per season | `20` | How many per season on the Seasons page (max 50) |
 | Cron schedule | `0 4 * * *` | Container timezone |
 | Run on start | on | Run immediately when the container starts |
 | Cache lifetime | `24h` | How long before AniList is re-fetched |
@@ -109,7 +115,7 @@ app/
   state.py                thread-safe run state
   logging_setup.py        stdout logging + in-memory ring buffer
   clients/                anilist, shoko, sonarr, mappings
-  core/                   compare, stats, models (pure logic)
+  core/                   compare, stats, seasons, models (pure logic)
   web/                    Flask app, templates, static assets
 tests/                    pytest suite
 ```
@@ -118,6 +124,13 @@ tests/                    pytest suite
 
 - **AniList ↔ Shoko** — matched on **MAL ID or AniDB ID** (either is enough),
   via the [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs) mapping.
+  The AniDB ID is the *key* of each mapping object rather than a field on it,
+  which is easy to miss.
+- **AniList ↔ Sonarr** — matched on the **TVDB ID** from the same mapping.
+  Roughly half the mapped entries have one; the rest show *No TVDB ID* rather
+  than a misleading "not in Sonarr". Where the mapping names a TVDB season, the
+  per-season file count is used, so season 1 being on disk doesn't mark season
+  2 as owned.
 - **Sonarr ↔ Shoko** — matched on **TVDB ID**.
 - Shoko exposes IDs differently across versions, so both `IDs.*` and the
   `Links` list are checked. If match rates look wrong, use
@@ -126,6 +139,31 @@ tests/                    pytest suite
 - **Franchise root** = an entry with no `PREQUEL` relation. One-hop check, so a
   franchise with gaps could slip through.
 - **Recommendation score** = `averageScore × 0.8 + log10(popularity) × 10`.
+
+### Sonarr status
+
+| Shown as | Means |
+|---|---|
+| ✓ In Sonarr | Sonarr has it, with episode files on disk |
+| Monitored | Sonarr has the series, but nothing downloaded yet |
+| Not in Sonarr | The TVDB ID is known and Sonarr doesn't have it |
+| No TVDB ID | The mapping file has no TVDB ID — Sonarr can't be checked |
+| — | Sonarr is switched off, or the last run couldn't reach it |
+
+## Seasons
+
+The **Seasons** page lists the top shows of the current season plus the one
+either side, each ranked by popularity, trending or score — the toggle switches
+between rankings without a refetch, since a run collects all three.
+
+Ranking comes from **AniList**, not AniDB: AniDB's HTTP API has no endpoint that
+returns a season's shows or any seasonal ranking (only `anime` by AID,
+`hotanime`, `main`, the random ones and the titles dump), and it requires a
+registered client with strict rate limits.
+
+Shows are matched against Shoko exactly as the library page does. Ones airing
+next season are often too new for the mapping file, so they legitimately show as
+unmatched rather than missing.
 
 ## API
 
@@ -159,6 +197,12 @@ without building the image; the container itself runs 3.12.
 
 - Scheduling is in-process (`croniter`) — no cron daemon in the image.
 - If AniList is unreachable, a stale cache is used rather than failing the run.
-- Sonarr failures degrade gracefully; the rest of the run still completes.
+- Sonarr failures degrade gracefully; the rest of the run still completes, and
+  the Sonarr column reads *unknown* rather than pretending the library is empty.
+- A failed seasonal fetch keeps the previous run's charts instead of blanking
+  the page.
 - Secrets are masked in the settings UI and never sent to the browser in full.
 - CSV export was removed in v4 — the dashboard and `/api/results` replace it.
+- Fixed in 4.1: AniDB IDs were never loaded from the mapping file, so matching
+  had been silently falling back to MAL alone. Expect the Shoko match rate to
+  go up on the first run after upgrading.

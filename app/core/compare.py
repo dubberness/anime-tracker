@@ -7,7 +7,15 @@ rules can be unit tested directly.
 import math
 import re
 
-from core.models import Entry, SonarrEntry
+from core.models import (
+    SONARR_MISSING,
+    SONARR_OWNED,
+    SONARR_UNKNOWN,
+    SONARR_UNMAPPED,
+    SONARR_WANTED,
+    Entry,
+    SonarrEntry,
+)
 from logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -25,6 +33,13 @@ def _as_list(value):
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def extract_shoko_ids(shoko_series):
@@ -129,8 +144,107 @@ def recommendation_score(score, popularity):
     return round(score * 0.8 + math.log10(max(popularity, 1)) * 10, 2)
 
 
-def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings):
-    """Match the AniList list against the Shoko library."""
+def build_sonarr_index(sonarr_series):
+    """TVDB ID -> what Sonarr holds for it, including per-season file counts.
+
+    Sonarr is keyed on the whole TVDB series while the mapping file is one row
+    per AniDB entry (roughly, per anime season). The per-season counts are what
+    stop a sequel being reported as owned just because season 1 is on disk.
+    """
+    index = {}
+
+    for series in sonarr_series:
+        tvdb_id = series.get("tvdbId")
+        if not tvdb_id:
+            continue
+
+        stats = series.get("statistics") or {}
+
+        seasons = {}
+        for season in series.get("seasons") or []:
+            number = _as_int(season.get("seasonNumber"))
+            if number is None:
+                continue
+            season_stats = season.get("statistics") or {}
+            seasons[number] = season_stats.get("episodeFileCount", 0) or 0
+
+        index[str(tvdb_id)] = {
+            "title": series.get("title", "Unknown"),
+            "episode_file_count": stats.get("episodeFileCount", 0) or 0,
+            "seasons": seasons,
+        }
+
+    return index
+
+
+def sonarr_status(tvdb_id, tvdb_season, index, available=True):
+    """Where one tracked entry stands in Sonarr. See core.models for the states."""
+    if not available:
+        return SONARR_UNKNOWN
+    if not tvdb_id:
+        return SONARR_UNMAPPED
+
+    series = (index or {}).get(str(tvdb_id))
+    if series is None:
+        return SONARR_MISSING
+
+    # tvdb_season is -1 when the mapping doesn't know which season this is, in
+    # which case the series-wide count is the best available answer.
+    seasons = series.get("seasons") or {}
+    if tvdb_season is not None and tvdb_season in seasons:
+        files = seasons[tvdb_season]
+    else:
+        files = series.get("episode_file_count", 0)
+
+    return SONARR_OWNED if files else SONARR_WANTED
+
+
+def _build_entry(media, mapping, mal_ids, anidb_ids,
+                 sonarr_index=None, sonarr_available=False, rank=None):
+    """Turn one AniList media object plus its mapping row into an Entry."""
+    mapping = mapping or {}
+
+    mal_id = mapping.get("mal_id")
+    anidb_id = mapping.get("anidb_id")
+    tvdb_id = mapping.get("tvdb_id")
+    tvdb_season = _as_int(mapping.get("tvdb_season"))
+
+    score = media.get("averageScore") or 0
+    popularity = media.get("popularity") or 0
+
+    owned = bool(
+        (mal_id and str(mal_id) in mal_ids)
+        or (anidb_id and str(anidb_id) in anidb_ids)
+    )
+
+    return Entry(
+        rank=media.get("rank", 0) if rank is None else rank,
+        title=_title_of(media),
+        score=score,
+        popularity=popularity,
+        recommendation_score=recommendation_score(score, popularity),
+        episodes=media.get("episodes"),
+        year=(media.get("startDate") or {}).get("year"),
+        anilist_id=media["id"],
+        mal_id=str(mal_id) if mal_id else "",
+        anidb_id=str(anidb_id) if anidb_id else "",
+        image=(media.get("coverImage") or {}).get("large", ""),
+        owned=owned,
+        is_franchise_root=not _has_prequel(media),
+        format=media.get("format") or "",
+        status=media.get("status") or "",
+        genres=media.get("genres") or [],
+        tvdb_id=str(tvdb_id) if tvdb_id else "",
+        tvdb_season=tvdb_season,
+        sonarr_status=sonarr_status(
+            tvdb_id, tvdb_season, sonarr_index, sonarr_available
+        ),
+    )
+
+
+def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings,
+                        sonarr_index=None, sonarr_available=False):
+    """Match the AniList list against the Shoko library, and against Sonarr."""
     log.info("Comparing %s AniList entries against the Shoko library", len(anilist))
 
     by_mal = {}
@@ -138,43 +252,15 @@ def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings):
 
     for media in anilist:
         mapping = mappings.get(int(media["id"]))
-        if not mapping:
+        if not mapping or not mapping.get("mal_id"):
             unmapped += 1
             continue
 
-        mal_id = mapping.get("mal_id")
-        if not mal_id:
-            unmapped += 1
+        if (media.get("popularity") or 0) < settings.min_popularity:
             continue
 
-        popularity = media.get("popularity") or 0
-        if popularity < settings.min_popularity:
-            continue
-
-        anidb_id = mapping.get("anidb_id")
-        score = media.get("averageScore") or 0
-
-        owned = (str(mal_id) in mal_ids
-                 or (anidb_id and str(anidb_id) in anidb_ids))
-
-        entry = Entry(
-            rank=media.get("rank", 0),
-            title=_title_of(media),
-            score=score,
-            popularity=popularity,
-            recommendation_score=recommendation_score(score, popularity),
-            episodes=media.get("episodes"),
-            year=(media.get("startDate") or {}).get("year"),
-            anilist_id=media["id"],
-            mal_id=str(mal_id),
-            anidb_id=str(anidb_id) if anidb_id else "",
-            image=(media.get("coverImage") or {}).get("large", ""),
-            owned=bool(owned),
-            is_franchise_root=not _has_prequel(media),
-            format=media.get("format") or "",
-            status=media.get("status") or "",
-            genres=media.get("genres") or [],
-        )
+        entry = _build_entry(media, mapping, mal_ids, anidb_ids,
+                             sonarr_index, sonarr_available)
 
         # Several AniList entries can map to one MAL ID; keep the best-ranked.
         existing = by_mal.get(entry.mal_id)
@@ -185,6 +271,35 @@ def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings):
     log.info("Tracked entries: %s (%s AniList entries had no usable mapping)",
              len(results), unmapped)
     return results
+
+
+def build_season_entries(media_list, mappings, mal_ids, anidb_ids,
+                         sonarr_index=None, sonarr_available=False, limit=20):
+    """Rank one season's media, keeping entries the mapping doesn't know yet.
+
+    Deliberately skips the popularity floor and the mapping requirement that
+    compare_collections applies: a show airing next season is exactly the one
+    Kometa hasn't mapped and nobody has rated yet, and dropping those would
+    leave the page empty. Such entries simply can't be matched, and say so.
+    """
+    entries = []
+    seen = set()
+
+    for media in media_list:
+        anilist_id = _as_int(media.get("id"))
+        if anilist_id is None or anilist_id in seen:
+            continue
+        seen.add(anilist_id)
+
+        entries.append(_build_entry(
+            media, mappings.get(anilist_id), mal_ids, anidb_ids,
+            sonarr_index, sonarr_available, rank=len(entries) + 1,
+        ))
+
+        if len(entries) >= limit:
+            break
+
+    return entries
 
 
 def compare_sonarr(sonarr_series, tvdb_ids):

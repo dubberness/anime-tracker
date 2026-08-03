@@ -10,31 +10,56 @@ from logging_setup import get_logger
 
 log = get_logger(__name__)
 
-QUERY = """
-query ($page: Int, $perPage: Int, $formats: [MediaFormat], $sort: [MediaSort]) {
-  Page(page: $page, perPage: $perPage) {
-    pageInfo { hasNextPage }
-    media(type: ANIME, format_in: $formats, sort: $sort) {
-      id
-      title { romaji english }
-      format
-      averageScore
-      popularity
-      episodes
-      genres
-      status
-      startDate { year }
-      coverImage { large }
-      relations {
-        edges {
-          relationType(version: 2)
-          node { id type }
-        }
-      }
+MEDIA_FRAGMENT = """
+fragment trackedMedia on Media {
+  id
+  title { romaji english }
+  format
+  averageScore
+  popularity
+  episodes
+  genres
+  status
+  startDate { year }
+  coverImage { large }
+  relations {
+    edges {
+      relationType(version: 2)
+      node { id type }
     }
   }
 }
 """
+
+QUERY = """
+query ($page: Int, $perPage: Int, $formats: [MediaFormat], $sort: [MediaSort]) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { hasNextPage }
+    media(type: ANIME, format_in: $formats, sort: $sort) { ...trackedMedia }
+  }
+}
+""" + MEDIA_FRAGMENT
+
+# The three rankings the seasons page toggles between. These double as the
+# GraphQL aliases below, so one request per season covers all three.
+SEASON_SORTS = ("popularity", "trending", "score")
+
+SEASON_QUERY = """
+query ($season: MediaSeason, $year: Int, $perPage: Int, $formats: [MediaFormat]) {
+  popularity: Page(page: 1, perPage: $perPage) {
+    media(type: ANIME, season: $season, seasonYear: $year,
+          format_in: $formats, sort: [POPULARITY_DESC]) { ...trackedMedia }
+  }
+  trending: Page(page: 1, perPage: $perPage) {
+    media(type: ANIME, season: $season, seasonYear: $year,
+          format_in: $formats, sort: [TRENDING_DESC]) { ...trackedMedia }
+  }
+  score: Page(page: 1, perPage: $perPage) {
+    media(type: ANIME, season: $season, seasonYear: $year,
+          format_in: $formats, sort: [SCORE_DESC]) { ...trackedMedia }
+  }
+}
+""" + MEDIA_FRAGMENT
 
 
 class AniListClient:
@@ -142,6 +167,40 @@ class AniListClient:
         entries = entries[: self.settings.max_results]
         log.info("AniList entries loaded: %s", len(entries))
         return entries
+
+    def fetch_season(self, season, year, per_page=20):
+        """Top `per_page` for one season, under each of SEASON_SORTS.
+
+        Deliberately uncached: it is one request for all three rankings, and
+        the current season moves under you in a way the main list does not.
+        """
+        payload = {
+            "query": SEASON_QUERY,
+            "variables": {
+                "season": season,
+                "year": year,
+                "perPage": per_page,
+                "formats": self.settings.formats,
+            },
+        }
+
+        data = request_with_retry(
+            "POST", self.settings.url,
+            max_retries=self.network.max_retries,
+            backoff=self.network.initial_backoff_seconds,
+            timeout=self.network.timeout_seconds,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        if data.get("errors") and not data.get("data"):
+            raise RuntimeError(f"AniList returned errors: {data['errors']}")
+
+        body = data.get("data") or {}
+        return {
+            key: (body.get(key) or {}).get("media") or []
+            for key in SEASON_SORTS
+        }
 
     def test_connection(self):
         """Cheap one-item query used by the settings page."""

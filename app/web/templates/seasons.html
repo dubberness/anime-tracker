@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not seasons %}
+<section class="card">
+  <p class="empty-state">
+    No seasonal charts yet - they are collected on the next run.
+  </p>
+</section>
+{% else %}
+
+<section class="card">
+  <div class="toolbar">
+    <div class="seg" id="season-tabs">
+      {% for block in seasons %}
+      <button data-season="{{ loop.index0 }}"
+              class="{% if block.is_current %}is-active{% endif %}">
+        {{ block.label }}{% if block.is_current %} &middot; now{% endif %}
+      </button>
+      {% endfor %}
+    </div>
+
+    <div class="seg" id="season-sorts">
+      <button data-sort="popularity" class="is-active">Popularity</button>
+      <button data-sort="trending">Trending</button>
+      <button data-sort="score">Score</button>
+    </div>
+
+    <span class="spacer"></span>
+    <span class="meter-value" id="season-summary"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table id="season-table" data-sonarr="{{ '1' if data.sonarr_enabled else '' }}">
+      <thead>
+        <tr>
+          <th scope="col">Cover</th>
+          <th scope="col">#</th>
+          <th scope="col">Title</th>
+          <th scope="col">Score</th>
+          <th scope="col">Popularity</th>
+          <th scope="col">Shoko</th>
+          {% if data.sonarr_enabled %}<th scope="col">Sonarr</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody id="season-body">
+        <tr><td colspan="7"><p class="empty-state">Loading...</p></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="hint" style="margin-top:14px">
+    Ranked by AniList, filtered to the formats set on the
+    <a href="{{ url_for('settings_page') }}">settings page</a>. Shows airing next
+    season are often too new for the ID mapping file, so some rows can't be
+    matched against Shoko yet.
+  </p>
+</section>
+
+<script type="application/json" id="season-data">{{ seasons | tojson }}</script>
+
+{% endif %}
+
+{% endblock %}

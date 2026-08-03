@@ -131,6 +131,16 @@
         <p class="hint">Comma-separated rank tiers for the progress bars.</p>
       </div>
     </div>
+
+    <div class="field">
+      <label for="season-limit">Shows per season</label>
+      <input type="number" id="season-limit" data-path="ui.season_limit"
+             min="1" max="50" value="{{ values.ui.season_limit }}">
+      <p class="hint">
+        How many to list on the Seasons page, for the current season and the
+        one either side. AniList caps this at 50.
+      </p>
+    </div>
   </section>
 
   <!-- ---------- Schedule ---------- -->

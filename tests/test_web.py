@@ -44,6 +44,7 @@ def seed_results(ctx):
             "anilist_id": 1, "mal_id": "1", "anidb_id": "", "image": "",
             "owned": True, "is_franchise_root": True, "genres": [],
             "format": "TV", "status": "FINISHED",
+            "tvdb_id": "500", "tvdb_season": 1, "sonarr_status": "owned",
         }],
         "sonarr": [],
         "stats": {"total": 1, "owned": 1, "missing": 0, "completion": 100.0,
@@ -58,7 +59,14 @@ def seed_results(ctx):
         "totals": {"shoko_shows": 1, "shoko_episodes": 12,
                    "shoko_episodes_suspect": False,
                    "sonarr_shows": 0, "sonarr_episodes": 0},
-        "sonarr_enabled": False, "sonarr_error": None,
+        "comparison": None,
+        "seasons": [{
+            "season": "SUMMER", "year": 2026, "label": "Summer 2026",
+            "is_current": True,
+            "sorts": {"popularity": [], "trending": [], "score": []},
+        }],
+        "sonarr_enabled": False, "sonarr_available": False,
+        "sonarr_error": None,
     }
     ctx.storage.save_results(payload)
     ctx.runner.load_cached_results()
@@ -117,6 +125,78 @@ def test_library_and_migration_pages_render(client, ctx):
 
     assert client.get("/library").status_code == 200
     assert client.get("/migration").status_code == 200
+
+
+def test_seasons_page_renders_the_season_tabs(client, ctx):
+    configure(ctx)
+    seed_results(ctx)
+
+    response = client.get("/seasons")
+    assert response.status_code == 200
+    assert b"Summer 2026" in response.data
+
+
+def test_seasons_page_shows_an_empty_state_before_the_first_run(client, ctx):
+    configure(ctx)
+    response = client.get("/seasons")
+    assert response.status_code == 200
+    assert b"No results yet" in response.data
+
+
+def test_seasons_page_survives_results_from_before_the_feature(client, ctx):
+    """A results.json written by 4.0 has no seasons key at all."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    del payload["seasons"]
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    response = client.get("/seasons")
+    assert response.status_code == 200
+    assert b"collected on the next run" in response.data
+
+
+def test_library_page_hides_the_sonarr_column_when_sonarr_is_off(client, ctx):
+    configure(ctx)
+    seed_results(ctx)
+
+    body = client.get("/library").data
+    assert b'data-sonarr=""' in body
+    assert b"Sonarr only" not in body
+
+
+def test_library_page_shows_the_sonarr_column_when_sonarr_is_on(client, ctx):
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload["sonarr_available"] = True
+    payload["comparison"] = {"both": 1, "shoko_only": 0, "sonarr_only": 0,
+                             "neither": 0, "unmapped": 0, "comparable": 1,
+                             "in_sonarr": 1}
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    body = client.get("/library").data
+    assert b'data-sonarr="1"' in body
+    assert b"Sonarr only" in body
+    assert b"in both" in body
+
+
+def test_library_page_warns_when_sonarr_was_unreachable(client, ctx):
+    """A dead Sonarr must not read as an empty one."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload["sonarr_available"] = False
+    payload["sonarr_error"] = "Connection refused"
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    body = client.get("/library").data
+    assert b"be reached on the last run" in body
+    assert b"Connection refused" in body
+    # The comparison filters need both libraries, so they stay hidden.
+    assert b"Sonarr only" not in body
 
 
 def test_settings_page_renders_when_unconfigured(client):
