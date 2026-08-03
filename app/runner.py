@@ -5,8 +5,9 @@ import time
 import traceback
 from datetime import date, datetime
 
-from clients import AniListClient, ShokoClient, SonarrClient
+from clients import AniListClient, AutobrrClient, ShokoClient, SonarrClient
 from clients import mappings as mapping_client
+from core import autobrr as autobrr_mod
 from core import compare
 from core import seasons as season_mod
 from core import stats as stats_mod
@@ -142,6 +143,83 @@ class Runner:
                  ", ".join(block["label"] for block in blocks))
         return blocks
 
+    # ==========================
+    # Autobrr tracking
+    # ==========================
+
+    def _refresh_tracked(self, mappings, anilist):
+        """Backfill IDs and titles onto rows tracked before they were known.
+
+        A show tracked the week it was announced often has no mapping entry
+        and a placeholder title. Both usually land within a run or two, and
+        without this the stored row would keep the stale version forever.
+        """
+        tracked = self.storage.list_autobrr_tracked()
+        if not tracked:
+            return
+
+        by_id = {int(m["id"]): m for m in anilist if m.get("id")}
+        updated = 0
+
+        for row in tracked:
+            anilist_id = row["anilist_id"]
+            mapping = mappings.get(anilist_id) or {}
+            media = by_id.get(anilist_id)
+
+            title = compare.title_of(media) if media else row["title"]
+            title_alt = compare.alt_title_of(media, title) if media else row["title_alt"]
+            mal_id = str(mapping.get("mal_id") or row["mal_id"] or "")
+            anidb_id = str(mapping.get("anidb_id") or row["anidb_id"] or "")
+
+            if (title == row["title"] and title_alt == row["title_alt"]
+                    and mal_id == row["mal_id"] and anidb_id == row["anidb_id"]):
+                continue
+
+            self.storage.track_autobrr(
+                anilist_id, title, title_alt, mal_id, anidb_id, row["source"]
+            )
+            updated += 1
+
+        if updated:
+            log.info("Refreshed %s tracked autobrr show(s) with newer data", updated)
+
+    def _prune_tracked(self, mal_ids, anidb_ids):
+        """Drop tracked shows Shoko has since picked up."""
+        removed = 0
+
+        for row in self.storage.list_autobrr_tracked():
+            if autobrr_mod.is_now_owned(row, mal_ids, anidb_ids):
+                self.storage.untrack_autobrr(row["anilist_id"])
+                log.info("Untracking '%s' from autobrr - Shoko has it now", row["title"])
+                removed += 1
+
+        return removed
+
+    def _auto_seed_tracked(self, seasons, limit):
+        """Track the current season's most popular shows Shoko is missing."""
+        current = next((b for b in seasons if b.get("is_current")), None)
+        if current is None:
+            return 0
+
+        candidates = autobrr_mod.auto_seed_candidates(
+            current, self.storage.autobrr_excluded_ids(), limit
+        )
+        already = self.storage.autobrr_tracked_ids()
+        added = 0
+
+        for entry in candidates:
+            if entry["anilist_id"] in already:
+                continue
+            self.storage.track_autobrr(
+                entry["anilist_id"], entry["title"], entry.get("title_alt", ""),
+                entry.get("mal_id", ""), entry.get("anidb_id", ""),
+                autobrr_mod.AUTO,
+            )
+            log.info("Auto-tracking '%s' for autobrr", entry["title"])
+            added += 1
+
+        return added
+
     def _execute(self, run_id, started):
         settings = self.config.settings
 
@@ -174,6 +252,9 @@ class Runner:
 
         mal_ids, anidb_ids, tvdb_ids = compare.extract_shoko_ids(shoko_series)
         shoko_episodes, episodes_suspect = compare.count_shoko_episodes(shoko_series)
+
+        self._refresh_tracked(mapping_lookup, anilist)
+        self._prune_tracked(mal_ids, anidb_ids)
 
         # ---- Sonarr ----
         # Ahead of the comparison so every tracked entry can carry its Sonarr
@@ -229,6 +310,19 @@ class Runner:
             sonarr_index, sonarr_available, previous.get("seasons"),
         )
 
+        # ---- autobrr ----
+        # After the seasons phase, since auto-seeding reads the current
+        # season block that step produces.
+        self.state.set_phase("autobrr", "Updating the autobrr list")
+        self._auto_seed_tracked(seasons, settings.autobrr.auto_seed_limit)
+        autobrr_tracked = self.storage.list_autobrr_tracked()
+
+        if settings.autobrr.configured:
+            try:
+                AutobrrClient(settings.autobrr, network).trigger_list_refresh()
+            except Exception as exc:  # noqa: BLE001 - autobrr is optional
+                log.error("Autobrr refresh failed, continuing: %s", exc)
+
         # ---- persist ----
         self.state.set_phase("persist", "Saving results")
         duration = (datetime.now() - started).total_seconds()
@@ -247,6 +341,8 @@ class Runner:
             "totals": totals,
             "comparison": comparison,
             "seasons": seasons,
+            "autobrr_tracked": len(autobrr_tracked),
+            "autobrr_enabled": bool(settings.autobrr.configured),
             "sonarr_enabled": sonarr_enabled,
             "sonarr_available": sonarr_available,
             "sonarr_error": sonarr_error,

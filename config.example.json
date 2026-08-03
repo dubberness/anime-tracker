@@ -9,6 +9,13 @@
     "api_key": "YOUR_SONARR_API_KEY",
     "enabled": true
   },
+  "autobrr": {
+    "url": "http://192.168.5.145:7474",
+    "api_key": "YOUR_AUTOBRR_API_KEY",
+    "list_id": "1",
+    "enabled": true,
+    "auto_seed_limit": 10
+  },
   "anilist": {
     "max_results": 1000,
     "min_popularity": 50000,

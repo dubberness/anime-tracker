@@ -5,6 +5,7 @@ from datetime import datetime
 
 from flask import (
     Flask,
+    Response,
     jsonify,
     redirect,
     render_template,
@@ -14,8 +15,15 @@ from flask import (
 
 import config as config_mod
 import logging_setup
-from clients import AniListClient, ShokoClient, SonarrClient, describe_error
+from clients import (
+    AniListClient,
+    AutobrrClient,
+    ShokoClient,
+    SonarrClient,
+    describe_error,
+)
 from clients import mappings as mapping_client
+from core import autobrr as autobrr_mod
 from logging_setup import get_logger
 from version import VERSION, version_string
 
@@ -119,11 +127,15 @@ def _register_pages(app, ctx):
             return render_template("empty.html", status=ctx.state.snapshot(),
                                    title="Seasons")
 
+        seasons = _annotate_tracked(results.get("seasons") or [],
+                                    ctx.storage.autobrr_tracked_ids())
+
         return render_template(
             "seasons.html",
             title="Seasons",
             data=results,
-            seasons=results.get("seasons") or [],
+            seasons=seasons,
+            tracked_count=len(ctx.storage.autobrr_tracked_ids()),
             status=ctx.state.snapshot(),
         )
 
@@ -155,6 +167,8 @@ def _register_pages(app, ctx):
             valid_sorts=config_mod.VALID_SORTS,
             runtime=ctx.runtime,
             setup=request.args.get("setup") == "1",
+            autobrr_list_url=url_for("api_autobrr_list", _external=True),
+            tracked_count=len(ctx.storage.autobrr_tracked_ids()),
             status=ctx.state.snapshot(),
         )
 
@@ -182,6 +196,40 @@ def _trend_points(history):
         })
 
     return points
+
+
+def _auto_seed_ids(ctx):
+    """AniList IDs the next run would auto-track, from the last run's data."""
+    results = ctx.runner.results or {}
+    current = next(
+        (b for b in results.get("seasons") or [] if b.get("is_current")), None
+    )
+
+    candidates = autobrr_mod.auto_seed_candidates(
+        current,
+        ctx.storage.autobrr_excluded_ids(),
+        ctx.config.settings.autobrr.auto_seed_limit,
+    )
+    return {entry["anilist_id"] for entry in candidates}
+
+
+def _annotate_tracked(seasons, tracked_ids):
+    """Mark which season entries autobrr is already being told to grab.
+
+    Done server-side so the page renders the right button state immediately
+    instead of flickering through a second request.
+    """
+    annotated = []
+
+    for block in seasons:
+        sorts = {
+            key: [dict(entry, autobrr_tracked=entry["anilist_id"] in tracked_ids)
+                  for entry in entries]
+            for key, entries in (block.get("sorts") or {}).items()
+        }
+        annotated.append(dict(block, sorts=sorts))
+
+    return annotated
 
 
 def _top_picks(results, limit):
@@ -314,6 +362,10 @@ def _register_api(app, ctx):
                 candidate = _merge_connection(settings.sonarr, payload)
                 message = SonarrClient(candidate, network).test_connection()
 
+            elif service == "autobrr":
+                candidate = _merge_connection(settings.autobrr, payload)
+                message = AutobrrClient(candidate, network).test_connection()
+
             elif service == "anilist":
                 message = AniListClient(
                     settings.anilist, ctx.runtime.cache_file, network
@@ -368,6 +420,55 @@ def _register_api(app, ctx):
             "episodes": episodes,
             "episodes_suspect": suspect,
         })
+
+    @app.route("/api/autobrr/list")
+    def api_autobrr_list():
+        """The plaintext list autobrr polls. This is the URL to paste into it.
+
+        Deliberately unauthenticated and always 200: autobrr fetches it on a
+        schedule, and an empty collection is a normal state rather than an
+        error.
+        """
+        body = autobrr_mod.build_list_text(ctx.storage.list_autobrr_tracked())
+        return Response(body + "\n" if body else "", mimetype="text/plain")
+
+    @app.route("/api/autobrr/tracked")
+    def api_autobrr_tracked():
+        return jsonify({"tracked": ctx.storage.list_autobrr_tracked()})
+
+    @app.route("/api/autobrr/track", methods=["POST"])
+    @_require_json
+    def api_autobrr_track():
+        payload = request.get_json(silent=True) or {}
+
+        try:
+            anilist_id = int(payload["anilist_id"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"ok": False, "error": "A numeric anilist_id is required"}), 400
+
+        title = (payload.get("title") or "").strip()
+        if not title:
+            return jsonify({"ok": False, "error": "A title is required"}), 400
+
+        ctx.storage.track_autobrr(
+            anilist_id,
+            title,
+            (payload.get("title_alt") or "").strip(),
+            payload.get("mal_id") or "",
+            payload.get("anidb_id") or "",
+            autobrr_mod.MANUAL,
+        )
+
+        return jsonify({"ok": True, "tracked": True})
+
+    @app.route("/api/autobrr/track/<int:anilist_id>", methods=["DELETE"])
+    def api_autobrr_untrack(anilist_id):
+        # Untracking something the next run would auto-add again has to stick,
+        # otherwise the decision silently reverses a few hours later.
+        exclude = anilist_id in _auto_seed_ids(ctx)
+        ctx.storage.untrack_autobrr(anilist_id, exclude=exclude)
+
+        return jsonify({"ok": True, "tracked": False, "excluded": exclude})
 
     @app.route("/api/mappings/refresh", methods=["POST"])
     @_require_json

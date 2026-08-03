@@ -2,7 +2,7 @@
 
 import os
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 
 # Injected at image build time by the Docker build args; falls back to "dev"
 # when running straight from a checkout.

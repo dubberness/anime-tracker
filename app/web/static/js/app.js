@@ -73,9 +73,29 @@
     unknown:  '<span class="pill pill-muted">&mdash;</span>'
   };
 
+  /* The autobrr cell only appears on the seasons page. A show already in
+     Shoko has nothing to grab, so it gets a dash rather than a dead button. */
+  function autobrrCell(entry) {
+    if (entry.owned) {
+      return '<td><span class="pill pill-muted">&mdash;</span></td>';
+    }
+
+    const tracked = !!entry.autobrr_tracked;
+    return `<td>
+      <button class="button button-tiny track-toggle${tracked ? " is-tracked" : ""}"
+              data-anilist-id="${entry.anilist_id}"
+              data-title="${escapeHtml(entry.title)}"
+              data-title-alt="${escapeHtml(entry.title_alt || "")}"
+              data-mal-id="${escapeHtml(entry.mal_id || "")}"
+              data-anidb-id="${escapeHtml(entry.anidb_id || "")}">
+        ${tracked ? "&#10003; Tracked" : "Track"}
+      </button>
+    </td>`;
+  }
+
   /* One row shape shared by the library and seasons tables - both are the same
      "an AniList entry, and where it lives" list. */
-  function entryRow(entry, withSonarr) {
+  function entryRow(entry, withSonarr, withAutobrr) {
     const mal = entry.mal_id
       ? `<a class="sub-link" href="https://myanimelist.net/anime/${escapeHtml(entry.mal_id)}" target="_blank" rel="noopener">MAL</a>
          <span class="sub-link">&middot;</span>`
@@ -103,6 +123,7 @@
           ? '<span class="pill pill-good">&#10003; In Shoko</span>'
           : '<span class="pill pill-muted">Missing</span>'}</td>
         ${sonarr}
+        ${withAutobrr ? autobrrCell(entry) : ""}
       </tr>
     `;
   }
@@ -562,7 +583,62 @@
         this.sort = button.dataset.sort;
       });
 
+      // Delegated: the body is re-rendered on every toggle, so per-button
+      // listeners would be rebound constantly.
+      body.addEventListener("click", event => {
+        const button = event.target.closest(".track-toggle");
+        if (button) this.toggle(button);
+      });
+
       this.render();
+    },
+
+    /* The same entry object appears in several rankings and seasons, so the
+       tracked flag is flipped everywhere it occurs, not just on the row that
+       was clicked. */
+    setTracked(anilistId, tracked) {
+      this.blocks.forEach(block => {
+        Object.keys(block.sorts || {}).forEach(key => {
+          block.sorts[key].forEach(entry => {
+            if (entry.anilist_id === anilistId) entry.autobrr_tracked = tracked;
+          });
+        });
+      });
+    },
+
+    async toggle(button) {
+      const anilistId = Number(button.dataset.anilistId);
+      const tracked = button.classList.contains("is-tracked");
+      const next = !tracked;
+
+      button.disabled = true;
+      this.setTracked(anilistId, next);
+      this.render();
+
+      try {
+        if (next) {
+          await api("/api/autobrr/track", {
+            method: "POST",
+            body: {
+              anilist_id: anilistId,
+              title: button.dataset.title,
+              title_alt: button.dataset.titleAlt,
+              mal_id: button.dataset.malId,
+              anidb_id: button.dataset.anidbId
+            }
+          });
+          toast(`Tracking "${button.dataset.title}" for autobrr`, "success");
+        } else {
+          const data = await api(`/api/autobrr/track/${anilistId}`, { method: "DELETE" });
+          toast(data.excluded
+            ? "Untracked - it won't be auto-added again"
+            : "Untracked", "success");
+        }
+      } catch (err) {
+        this.setTracked(anilistId, tracked);
+        this.render();
+        toast(err.message, "error");
+      }
     },
 
     bind(selector, apply) {
@@ -584,14 +660,15 @@
       const entries = (block.sorts && block.sorts[this.sort]) || [];
 
       body.innerHTML = entries.length
-        ? entries.map(entry => entryRow(entry, this.sonarr)).join("")
+        ? entries.map(entry => entryRow(entry, this.sonarr, true)).join("")
         : tableMessage($("#season-table"), "AniList has nothing listed for this season yet.");
 
       const summary = $("#season-summary");
       if (summary) {
         const owned = entries.filter(e => e.owned).length;
+        const tracked = entries.filter(e => !e.owned && e.autobrr_tracked).length;
         summary.textContent = entries.length
-          ? `${owned}/${entries.length} in Shoko`
+          ? `${owned}/${entries.length} in Shoko · ${tracked} tracked`
           : "";
       }
     }

@@ -33,6 +33,9 @@ class Entry:
     format: str = ""
     status: str = ""
     genres: List[str] = field(default_factory=list)
+    # Romaji title when it differs from `title`. Release groups pick one
+    # convention or the other, so autobrr wants both spellings.
+    title_alt: str = ""
     tvdb_id: str = ""
     tvdb_season: Optional[int] = None
     sonarr_status: str = SONARR_UNKNOWN

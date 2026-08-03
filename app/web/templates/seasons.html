@@ -42,10 +42,11 @@
           <th scope="col">Popularity</th>
           <th scope="col">Shoko</th>
           {% if data.sonarr_enabled %}<th scope="col">Sonarr</th>{% endif %}
+          <th scope="col">Autobrr</th>
         </tr>
       </thead>
       <tbody id="season-body">
-        <tr><td colspan="7"><p class="empty-state">Loading...</p></td></tr>
+        <tr><td colspan="8"><p class="empty-state">Loading...</p></td></tr>
       </tbody>
     </table>
   </div>
@@ -55,6 +56,15 @@
     <a href="{{ url_for('settings_page') }}">settings page</a>. Shows airing next
     season are often too new for the ID mapping file, so some rows can't be
     matched against Shoko yet.
+  </p>
+
+  <p class="hint">
+    The current season's top {{ settings.autobrr.auto_seed_limit }} that Shoko is missing are
+    tracked for autobrr automatically; track anything else by hand. Tracked
+    shows drop off once Shoko has them, and untracking an automatic pick keeps
+    it off. <strong>{{ tracked_count }}</strong> tracked right now &mdash; see
+    the <a href="{{ url_for('settings_page') }}">settings page</a> for the list
+    URL to give autobrr.
   </p>
 </section>
 

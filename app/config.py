@@ -65,6 +65,27 @@ class SonarrSettings:
 
 
 @dataclass
+class AutobrrSettings:
+    url: str = ""
+    api_key: str = ""
+    list_id: str = ""
+    enabled: bool = True
+    auto_seed_limit: int = 10
+
+    @property
+    def configured(self) -> bool:
+        """A list ID is required too - without one there is nothing to refresh."""
+        return bool(
+            self.enabled
+            and self.url
+            and self.api_key
+            and self.list_id
+            and not _is_placeholder(self.url)
+            and not _is_placeholder(self.api_key)
+        )
+
+
+@dataclass
 class AniListSettings:
     url: str = "https://graphql.anilist.co"
     max_results: int = 1000
@@ -111,6 +132,7 @@ class Settings:
     version: int = SCHEMA_VERSION
     shoko: ShokoSettings = field(default_factory=ShokoSettings)
     sonarr: SonarrSettings = field(default_factory=SonarrSettings)
+    autobrr: AutobrrSettings = field(default_factory=AutobrrSettings)
     anilist: AniListSettings = field(default_factory=AniListSettings)
     mappings: MappingSettings = field(default_factory=MappingSettings)
     schedule: ScheduleSettings = field(default_factory=ScheduleSettings)
@@ -133,6 +155,7 @@ class Settings:
         data = self.to_dict()
         data["shoko"]["api_key"] = mask_secret(self.shoko.api_key)
         data["sonarr"]["api_key"] = mask_secret(self.sonarr.api_key)
+        data["autobrr"]["api_key"] = mask_secret(self.autobrr.api_key)
         return data
 
 
@@ -315,6 +338,9 @@ ENV_OVERRIDES = {
     "SHOKO_API_KEY": ("shoko", "api_key", str),
     "SONARR_URL": ("sonarr", "url", str),
     "SONARR_API_KEY": ("sonarr", "api_key", str),
+    "AUTOBRR_URL": ("autobrr", "url", str),
+    "AUTOBRR_API_KEY": ("autobrr", "api_key", str),
+    "AUTOBRR_LIST_ID": ("autobrr", "list_id", str),
     "MAPPING_FILE": ("mappings", "path", str),
 }
 
@@ -451,7 +477,8 @@ class ConfigStore:
         return self.save()
 
     def _strip_unchanged_secrets(self, incoming, current):
-        for section, field_name in (("shoko", "api_key"), ("sonarr", "api_key")):
+        for section, field_name in (("shoko", "api_key"), ("sonarr", "api_key"),
+                                    ("autobrr", "api_key")):
             block = incoming.get(section)
             if not isinstance(block, dict) or field_name not in block:
                 continue
@@ -480,6 +507,12 @@ def validate(settings: Settings):
 
     if settings.sonarr.url and not settings.sonarr.url.startswith(("http://", "https://")):
         raise ValidationError("Sonarr URL must start with http:// or https://")
+
+    if settings.autobrr.url and not settings.autobrr.url.startswith(("http://", "https://")):
+        raise ValidationError("Autobrr URL must start with http:// or https://")
+
+    if not 1 <= settings.autobrr.auto_seed_limit <= 50:
+        raise ValidationError("Auto-track count must be between 1 and 50")
 
     if not croniter.is_valid(settings.schedule.cron):
         raise ValidationError(f"'{settings.schedule.cron}' is not a valid cron expression")
@@ -515,3 +548,4 @@ def validate(settings: Settings):
     # Trailing slashes break the f-string URL joins in the clients.
     settings.shoko.url = settings.shoko.url.rstrip("/")
     settings.sonarr.url = settings.sonarr.url.rstrip("/")
+    settings.autobrr.url = settings.autobrr.url.rstrip("/")
