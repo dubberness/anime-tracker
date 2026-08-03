@@ -34,6 +34,26 @@ CREATE TABLE IF NOT EXISTS runs (
     sonarr_remaining_gb REAL  DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_runs_started ON runs (started_at);
+
+-- Shows autobrr is being told to grab. IDs are stored rather than looked up
+-- so ownership can be rechecked even for shows too new or too obscure to
+-- appear in the tracked list at all.
+CREATE TABLE IF NOT EXISTS autobrr_tracked (
+    anilist_id  INTEGER PRIMARY KEY,
+    title       TEXT    NOT NULL,
+    title_alt   TEXT    NOT NULL DEFAULT '',
+    mal_id      TEXT    NOT NULL DEFAULT '',
+    anidb_id    TEXT    NOT NULL DEFAULT '',
+    source      TEXT    NOT NULL DEFAULT 'manual',
+    added_at    TEXT    NOT NULL
+);
+
+-- Shows deliberately untracked. Without this an auto-seeded pick would come
+-- straight back on the next run.
+CREATE TABLE IF NOT EXISTS autobrr_excluded (
+    anilist_id  INTEGER PRIMARY KEY,
+    excluded_at TEXT    NOT NULL
+);
 """
 
 
@@ -148,6 +168,79 @@ class Storage:
                 """,
                 (keep,),
             )
+
+    # ==========================
+    # Autobrr tracking
+    # ==========================
+
+    def track_autobrr(self, anilist_id, title, title_alt="", mal_id="",
+                      anidb_id="", source="manual"):
+        """Add or refresh a tracked show, and clear any exclusion on it.
+
+        Re-tracking something is an explicit "yes, I do want this", so it has
+        to undo an earlier untrack rather than leaving a stale exclusion that
+        would block the next auto-seed.
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO autobrr_tracked
+                    (anilist_id, title, title_alt, mal_id, anidb_id, source, added_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(anilist_id) DO UPDATE SET
+                    title = excluded.title,
+                    title_alt = excluded.title_alt,
+                    mal_id = excluded.mal_id,
+                    anidb_id = excluded.anidb_id
+                """,
+                (int(anilist_id), title, title_alt or "", str(mal_id or ""),
+                 str(anidb_id or ""), source,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+            conn.execute(
+                "DELETE FROM autobrr_excluded WHERE anilist_id = ?",
+                (int(anilist_id),),
+            )
+
+    def untrack_autobrr(self, anilist_id, exclude=False):
+        """Stop tracking a show, optionally pinning it out of auto-seeding."""
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "DELETE FROM autobrr_tracked WHERE anilist_id = ?",
+                (int(anilist_id),),
+            )
+            if exclude:
+                conn.execute(
+                    """
+                    INSERT INTO autobrr_excluded (anilist_id, excluded_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(anilist_id) DO NOTHING
+                    """,
+                    (int(anilist_id),
+                     datetime.now().isoformat(timespec="seconds")),
+                )
+
+    def list_autobrr_tracked(self):
+        """Every tracked show, oldest first."""
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM autobrr_tracked ORDER BY added_at, anilist_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def autobrr_tracked_ids(self):
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT anilist_id FROM autobrr_tracked"
+            ).fetchall()
+        return {row["anilist_id"] for row in rows}
+
+    def autobrr_excluded_ids(self):
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT anilist_id FROM autobrr_excluded"
+            ).fetchall()
+        return {row["anilist_id"] for row in rows}
 
     # ==========================
     # Latest result set

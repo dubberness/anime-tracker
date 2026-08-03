@@ -15,6 +15,7 @@ PHASES = [
     "sonarr",
     "compare",
     "seasons",
+    "autobrr",
     "persist",
 ]
 

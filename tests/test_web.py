@@ -1,6 +1,7 @@
 """Route smoke tests and the settings API contract."""
 
 import json
+import re
 
 import pytest
 
@@ -63,7 +64,19 @@ def seed_results(ctx):
         "seasons": [{
             "season": "SUMMER", "year": 2026, "label": "Summer 2026",
             "is_current": True,
-            "sorts": {"popularity": [], "trending": [], "score": []},
+            "sorts": {
+                "popularity": [
+                    {"anilist_id": 10, "title": "Airing One", "title_alt": "",
+                     "owned": False, "mal_id": "10", "anidb_id": "",
+                     "rank": 1, "score": 80, "popularity": 5000, "image": "",
+                     "is_franchise_root": True, "sonarr_status": "unknown"},
+                    {"anilist_id": 11, "title": "Airing Two", "title_alt": "",
+                     "owned": False, "mal_id": "11", "anidb_id": "",
+                     "rank": 2, "score": 75, "popularity": 4000, "image": "",
+                     "is_franchise_root": True, "sonarr_status": "unknown"},
+                ],
+                "trending": [], "score": [],
+            },
         }],
         "sonarr_enabled": False, "sonarr_available": False,
         "sonarr_error": None,
@@ -282,4 +295,110 @@ def test_logs_endpoint_returns_entries(client):
 
 def test_diagnostics_requires_shoko(client):
     response = client.get("/api/diagnostics/shoko")
+    assert response.status_code == 400
+
+
+# ==========================
+# Autobrr
+# ==========================
+
+def test_list_is_plaintext_and_empty_before_anything_is_tracked(client):
+    """autobrr polls this on a schedule - nothing tracked is not an error."""
+    response = client.get("/api/autobrr/list")
+    assert response.status_code == 200
+    assert response.mimetype == "text/plain"
+    assert response.data == b""
+
+
+def test_tracking_a_show_puts_it_on_the_list(client, ctx):
+    response = client.post("/api/autobrr/track", json={
+        "anilist_id": 55, "title": "Frieren", "title_alt": "Sousou no Frieren",
+        "mal_id": "52991", "anidb_id": "17617",
+    })
+    assert response.status_code == 200
+
+    body = client.get("/api/autobrr/list").data.decode()
+    assert body.split("\n")[:2] == ["Frieren", "Sousou no Frieren"]
+    assert ctx.storage.autobrr_tracked_ids() == {55}
+
+
+def test_tracking_requires_an_id_and_title(client):
+    assert client.post("/api/autobrr/track", json={"title": "x"}).status_code == 400
+    assert client.post("/api/autobrr/track", json={"anilist_id": 1}).status_code == 400
+
+
+def test_untracking_removes_it_from_the_list(client, ctx):
+    ctx.storage.track_autobrr(55, "Frieren")
+
+    response = client.delete("/api/autobrr/track/55")
+    assert response.status_code == 200
+    assert response.get_json()["tracked"] is False
+    assert client.get("/api/autobrr/list").data == b""
+
+
+def test_untracking_an_auto_pick_excludes_it(client, ctx):
+    """Otherwise the next run would silently re-add it."""
+    configure(ctx)
+    seed_results(ctx)
+    ctx.storage.track_autobrr(10, "Airing One", source="auto")
+
+    response = client.delete("/api/autobrr/track/10")
+
+    assert response.get_json()["excluded"] is True
+    assert ctx.storage.autobrr_excluded_ids() == {10}
+
+
+def test_untracking_a_manual_pick_does_not_exclude_it(client, ctx):
+    """Auto-seeding was never going to touch it, so there is nothing to block."""
+    configure(ctx)
+    seed_results(ctx)
+    ctx.storage.track_autobrr(999, "Something Obscure")
+
+    response = client.delete("/api/autobrr/track/999")
+
+    assert response.get_json()["excluded"] is False
+    assert ctx.storage.autobrr_excluded_ids() == set()
+
+
+def test_seasons_page_marks_tracked_shows(client, ctx):
+    """Rendered server-side so the button state is right on first paint."""
+    configure(ctx)
+    seed_results(ctx)
+    ctx.storage.track_autobrr(10, "Airing One")
+
+    body = client.get("/seasons").data.decode()
+    embedded = re.search(r'id="season-data">(.*?)</script>', body, re.S).group(1)
+    entries = json.loads(embedded)[0]["sorts"]["popularity"]
+
+    tracked = {e["anilist_id"]: e["autobrr_tracked"] for e in entries}
+    assert tracked == {10: True, 11: False}
+
+
+def test_settings_page_shows_the_list_url(client, ctx):
+    body = client.get("/settings").data.decode()
+    assert "/api/autobrr/list" in body
+
+
+def test_settings_accepts_autobrr_and_masks_the_key(client, ctx):
+    response = client.post("/api/settings", json={
+        "autobrr": {"url": "http://autobrr:7474", "api_key": "secret",
+                    "list_id": "3", "auto_seed_limit": 5},
+    })
+    assert response.status_code == 200
+    assert ctx.config.settings.autobrr.url == "http://autobrr:7474"
+    assert ctx.config.settings.autobrr.configured is True
+
+    body = client.get("/api/settings").get_json()
+    assert body["settings"]["autobrr"]["api_key"].startswith("****")
+    assert "secret" not in json.dumps(body)
+
+
+def test_settings_rejects_a_bad_autobrr_url(client):
+    response = client.post("/api/settings", json={"autobrr": {"url": "autobrr:7474"}})
+    assert response.status_code == 400
+    assert "autobrr" in response.get_json()["error"].lower()
+
+
+def test_settings_rejects_an_out_of_range_seed_limit(client):
+    response = client.post("/api/settings", json={"autobrr": {"auto_seed_limit": 99}})
     assert response.status_code == 400

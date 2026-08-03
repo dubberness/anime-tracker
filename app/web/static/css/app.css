@@ -398,6 +398,13 @@ td.title a:hover { color: var(--series-1); }
 .pill-warn { color: var(--serious); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
 .pill-muted { color: var(--muted); }
 
+.button-tiny { font-size: 11px; padding: 3px 10px; }
+.track-toggle.is-tracked {
+  color: var(--good-text);
+  border-color: color-mix(in srgb, var(--good) 40%, transparent);
+  background: color-mix(in srgb, var(--good) 8%, transparent);
+}
+
 /* ==========================
    Diff lists
    ========================== */

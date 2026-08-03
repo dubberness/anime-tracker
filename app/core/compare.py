@@ -125,9 +125,15 @@ def count_shoko_episodes(shoko_series):
     return total, looks_wrong
 
 
-def _title_of(media):
+def title_of(media):
     title = media.get("title") or {}
     return title.get("english") or title.get("romaji") or "Unknown"
+
+
+def alt_title_of(media, primary):
+    """The romaji title, when it isn't already the one being displayed."""
+    romaji = (media.get("title") or {}).get("romaji") or ""
+    return romaji if romaji and romaji != primary else ""
 
 
 def _has_prequel(media):
@@ -217,9 +223,12 @@ def _build_entry(media, mapping, mal_ids, anidb_ids,
         or (anidb_id and str(anidb_id) in anidb_ids)
     )
 
+    title = title_of(media)
+
     return Entry(
         rank=media.get("rank", 0) if rank is None else rank,
-        title=_title_of(media),
+        title=title,
+        title_alt=alt_title_of(media, title),
         score=score,
         popularity=popularity,
         recommendation_score=recommendation_score(score, popularity),

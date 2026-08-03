@@ -77,6 +77,75 @@
 
 <div class="grid grid-2" style="margin-top:16px">
 
+  <!-- ---------- Autobrr ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>Autobrr</h2><span class="sub">optional</span></div>
+
+    <p class="hint" style="margin-bottom:12px">
+      Tracked shows are published as a plaintext list. Point an autobrr list at
+      it and it keeps your filter's title matching in sync. Indexers, quality
+      and release groups stay configured in autobrr itself.
+    </p>
+
+    <div class="field">
+      <label>List URL <span class="sub">give this to autobrr</span></label>
+      <input type="text" value="{{ autobrr_list_url }}" readonly>
+      <p class="hint">
+        In autobrr: <strong>Settings &rarr; Lists &rarr; New</strong>, pick the
+        plaintext/custom type, paste this URL and select your anime filter as
+        the target. {{ tracked_count }} show(s) currently on it.
+      </p>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="autobrr-enabled" data-path="autobrr.enabled"
+             {% if values.autobrr.enabled %}checked{% endif %}>
+      <label for="autobrr-enabled">Tell autobrr to refresh after each run</label>
+    </div>
+
+    <div class="field">
+      <label for="autobrr-url">Server URL {{ locked('autobrr.url') }}</label>
+      <input type="text" id="autobrr-url" data-path="autobrr.url"
+             value="{{ values.autobrr.url }}" placeholder="http://192.168.1.10:7474"
+             {% if 'autobrr.url' in env_locked %}disabled{% endif %}>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="autobrr-key">API key {{ locked('autobrr.api_key') }}</label>
+        <input type="password" id="autobrr-key" data-path="autobrr.api_key"
+               value="{{ values.autobrr.api_key }}" placeholder="Leave blank to keep the current key"
+               {% if 'autobrr.api_key' in env_locked %}disabled{% endif %}>
+        <p class="hint">Autobrr &rarr; Settings &rarr; API keys.</p>
+      </div>
+
+      <div class="field">
+        <label for="autobrr-list-id">List ID {{ locked('autobrr.list_id') }}</label>
+        <input type="text" id="autobrr-list-id" data-path="autobrr.list_id"
+               value="{{ values.autobrr.list_id }}" placeholder="1"
+               {% if 'autobrr.list_id' in env_locked %}disabled{% endif %}>
+        <p class="hint">From the list's URL in autobrr. Only needed for the refresh push.</p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="autobrr-seed">Auto-track the season's top</label>
+      <input type="number" id="autobrr-seed" data-path="autobrr.auto_seed_limit"
+             min="1" max="50" value="{{ values.autobrr.auto_seed_limit }}">
+      <p class="hint">
+        Each run tracks this many of the current season's most popular shows
+        that Shoko is missing. Anything you untrack by hand stays untracked.
+      </p>
+    </div>
+
+    <button type="button" class="button" data-test="autobrr">Test connection</button>
+    <div class="test-result" id="test-result-autobrr"></div>
+  </section>
+
+</div>
+
+<div class="grid grid-2" style="margin-top:16px">
+
   <!-- ---------- Tracking ---------- -->
   <section class="card">
     <div class="card-head"><h2>What to track</h2></div>

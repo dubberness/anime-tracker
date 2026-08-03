@@ -89,3 +89,74 @@ def test_corrupt_results_file_returns_none(tmp_path):
         fh.write("not json")
 
     assert store.load_results() is None
+
+
+# ==========================
+# Autobrr tracking
+# ==========================
+
+def test_tracking_round_trip(tmp_path):
+    store = make_storage(tmp_path)
+    assert store.list_autobrr_tracked() == []
+
+    store.track_autobrr(1, "Frieren", "Sousou no Frieren", "52991", "17617")
+    rows = store.list_autobrr_tracked()
+
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Frieren"
+    assert rows[0]["title_alt"] == "Sousou no Frieren"
+    assert rows[0]["mal_id"] == "52991"
+    assert rows[0]["anidb_id"] == "17617"
+    assert store.autobrr_tracked_ids() == {1}
+
+
+def test_untracking_removes_the_row(tmp_path):
+    store = make_storage(tmp_path)
+    store.track_autobrr(1, "Frieren")
+    store.untrack_autobrr(1)
+
+    assert store.list_autobrr_tracked() == []
+    assert store.autobrr_excluded_ids() == set()
+
+
+def test_retracking_updates_details_but_keeps_added_at(tmp_path):
+    store = make_storage(tmp_path)
+    store.track_autobrr(1, "Placeholder Title", mal_id="", source="auto")
+    original = store.list_autobrr_tracked()[0]["added_at"]
+
+    store.track_autobrr(1, "Real Title", "Romaji Title", "500", "600")
+    row = store.list_autobrr_tracked()[0]
+
+    assert row["title"] == "Real Title"
+    assert row["title_alt"] == "Romaji Title"
+    assert row["mal_id"] == "500"
+    assert row["added_at"] == original
+
+
+def test_untracking_with_exclude_records_the_exclusion(tmp_path):
+    store = make_storage(tmp_path)
+    store.track_autobrr(1, "Frieren", source="auto")
+    store.untrack_autobrr(1, exclude=True)
+
+    assert store.list_autobrr_tracked() == []
+    assert store.autobrr_excluded_ids() == {1}
+
+
+def test_tracking_again_clears_an_exclusion(tmp_path):
+    """Opting back in has to undo an earlier opt-out completely."""
+    store = make_storage(tmp_path)
+    store.untrack_autobrr(1, exclude=True)
+    assert store.autobrr_excluded_ids() == {1}
+
+    store.track_autobrr(1, "Frieren")
+
+    assert store.autobrr_excluded_ids() == set()
+    assert store.autobrr_tracked_ids() == {1}
+
+
+def test_excluding_twice_does_not_error(tmp_path):
+    store = make_storage(tmp_path)
+    store.untrack_autobrr(1, exclude=True)
+    store.untrack_autobrr(1, exclude=True)
+
+    assert store.autobrr_excluded_ids() == {1}
