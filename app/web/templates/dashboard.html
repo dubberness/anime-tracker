@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if data.totals.shoko_episodes_suspect %}
+<div class="banner banner-warning">
+  <span class="banner-icon" aria-hidden="true">&#9888;</span>
+  <div>
+    <strong>Shoko episode count came back as 0.</strong>
+    The property path for episode counts varies by Shoko version.
+    Run the ID diagnostics on the <a href="{{ url_for('settings_page') }}">settings page</a>
+    to see what this instance actually returns.
+  </div>
+</div>
+{% endif %}
+
+{% if data.sonarr_error %}
+<div class="banner banner-error">
+  <span class="banner-icon" aria-hidden="true">&#9888;</span>
+  <div><strong>Sonarr fetch failed.</strong> {{ data.sonarr_error }}</div>
+</div>
+{% endif %}
+
+<section class="card section">
+  <div class="hero">
+    <div class="hero-figure">
+      <p class="eyebrow">Collection status</p>
+      <span class="hero-number">{{ stats.completion }}%</span>
+      <span class="hero-label">
+        {{ stats.owned }} of {{ stats.total }} tracked series in your library
+      </span>
+    </div>
+
+    <div class="hero-meta">
+      <div class="tile">
+        <span class="label">Owned</span>
+        <span class="value">{{ stats.owned }}</span>
+      </div>
+      <div class="tile">
+        <span class="label">Missing</span>
+        <span class="value">{{ stats.missing }}</span>
+      </div>
+      <div class="tile">
+        <span class="label">Missing roots</span>
+        <span class="value">{{ stats.missing_roots }}</span>
+      </div>
+      <div class="tile">
+        <span class="label">Shoko library</span>
+        <span class="value">{{ data.totals.shoko_shows }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="phase-track" id="phase-track"></div>
+</section>
+
+<div class="grid grid-2 section">
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Completion over time</h2>
+      <span class="sub">last {{ history|length }} run{{ '' if history|length == 1 else 's' }}</span>
+    </div>
+    <div class="chart" id="trend-chart"></div>
+    <script type="application/json" id="trend-data">{{ trend_points|tojson }}</script>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Progress by depth</h2>
+      <span class="sub">AniList rank tiers</span>
+    </div>
+    {% for tier in tiers %}
+    <div class="meter-row">
+      <span class="meter-label">Top {{ tier.tier }}</span>
+      <div class="meter-track">
+        <div class="meter-fill" style="width:{{ tier.completion }}%"></div>
+      </div>
+      <span class="meter-value">{{ tier.owned }}/{{ tier.total }}</span>
+    </div>
+    {% endfor %}
+  </section>
+
+</div>
+
+<div class="grid grid-2 section">
+
+  <section class="card">
+    <div class="card-head"><h2>Since last run</h2></div>
+
+    {% if not diff.has_previous %}
+      <p class="empty-state">First run - nothing to compare against yet.</p>
+    {% elif not diff.newly_owned and not diff.newly_tracked and not diff.newly_missing %}
+      <p class="empty-state">No changes since the last run.</p>
+    {% else %}
+      {% if diff.newly_owned %}
+      <p class="eyebrow">Newly owned ({{ diff.newly_owned|length }})</p>
+      <ul class="diff-list">
+        {% for d in diff.newly_owned[:8] %}
+        <li><a href="https://anilist.co/anime/{{ d.anilist_id }}" target="_blank" rel="noopener">{{ d.title }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if diff.newly_tracked %}
+      <p class="eyebrow" style="margin-top:14px">Newly tracked ({{ diff.newly_tracked|length }})</p>
+      <ul class="diff-list">
+        {% for d in diff.newly_tracked[:6] %}
+        <li><a href="https://anilist.co/anime/{{ d.anilist_id }}" target="_blank" rel="noopener">{{ d.title }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if diff.newly_missing %}
+      <p class="eyebrow" style="margin-top:14px">No longer matched ({{ diff.newly_missing|length }})</p>
+      <ul class="diff-list">
+        {% for d in diff.newly_missing[:6] %}
+        <li><a href="https://anilist.co/anime/{{ d.anilist_id }}" target="_blank" rel="noopener">{{ d.title }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Ownership by decade</h2>
+      <span class="sub">tracked series</span>
+    </div>
+    <div id="decade-chart"></div>
+    <script type="application/json" id="decade-data">{{ decades|tojson }}</script>
+  </section>
+
+</div>
+
+<section class="card section">
+  <div class="card-head">
+    <h2>Top picks to add</h2>
+    <span class="sub">highest-scoring franchise roots you don't have</span>
+  </div>
+
+  {% if top_picks %}
+  <div class="shelf">
+    {% for pick in top_picks %}
+    <a class="shelf-item"
+       href="https://nyaa.si/?f=0&amp;c=0_0&amp;q={{ pick.title | urlencode }}&amp;s=seeders&amp;o=desc"
+       target="_blank" rel="noopener">
+      <span class="shelf-rank">#{{ pick.rank }}</span>
+      <img src="{{ pick.image }}" alt="{{ pick.title }}" loading="lazy">
+      <span class="shelf-title">{{ pick.title }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-state">Nothing to add - every franchise root in range is already in your library.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

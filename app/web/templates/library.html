@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+  <div class="toolbar">
+    <input class="search" type="text" id="library-search"
+           placeholder="Search titles..." autocomplete="off">
+
+    <div class="seg" id="library-filters">
+      <button data-filter="all" class="is-active">All</button>
+      <button data-filter="owned">Owned</button>
+      <button data-filter="missing">Missing</button>
+      <button data-filter="roots">Missing roots</button>
+    </div>
+
+    <span class="spacer"></span>
+    <span class="meter-value">{{ stats.owned }}/{{ stats.total }} owned</span>
+  </div>
+
+  <div class="table-wrap" data-table>
+    <table id="library-table">
+      <thead>
+        <tr>
+          <th scope="col">Cover</th>
+          <th scope="col" class="sortable" data-type="num">Rank</th>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="num">Score</th>
+          <th scope="col" class="sortable" data-type="num">Popularity</th>
+          <th scope="col" class="sortable" data-type="text">Status</th>
+        </tr>
+      </thead>
+      <tbody id="library-body">
+        <tr><td colspan="6"><p class="empty-state">Loading...</p></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pager">
+    <button class="button" id="page-prev">Previous</button>
+    <button class="button" id="page-next">Next</button>
+    <span class="spacer"></span>
+    <span id="page-info"></span>
+  </div>
+</section>
+
+{% endblock %}

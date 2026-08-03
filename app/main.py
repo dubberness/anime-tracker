@@ -1,186 +1,143 @@
 """Anime Collection Tracker - entrypoint.
 
-Compares an AniList Top TV list against a Shoko library, and tracks a
-Sonarr -> Shoko migration. Writes CSV exports and an HTML dashboard.
+Compares an AniList list against a Shoko library and tracks a Sonarr -> Shoko
+migration, exposed as a small web app with a built-in scheduler.
 """
 
-import functools
-import os
+import signal
 import sys
 import threading
-import time
-import traceback
-from datetime import datetime
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-from croniter import croniter
+import logging_setup
 
-from config import load_config
-import clients
-import compare
-import report
+logging_setup.configure()
 
-VERSION = "3.0"
+import config as config_mod  # noqa: E402  - logging must be set up first
+from logging_setup import get_logger  # noqa: E402
+from runner import Runner  # noqa: E402
+from scheduler import Scheduler  # noqa: E402
+from state import RunState  # noqa: E402
+from storage import Storage  # noqa: E402
+from version import version_string  # noqa: E402
+
+log = get_logger("main")
 
 
-def run_once(cfg):
-    """Execute one full tracking run."""
-    started = datetime.now()
+class AppContext:
+    """Everything the web layer and scheduler need, wired together once."""
 
-    print("")
-    print("=" * 46)
-    print(f" Run started: {started:%Y-%m-%d %H:%M:%S}")
-    print("=" * 46)
+    def __init__(self, runtime, config, storage, state, runner, scheduler=None):
+        self.runtime = runtime
+        self.config = config
+        self.storage = storage
+        self.state = state
+        self.runner = runner
+        self.scheduler = scheduler
 
-    mappings = compare.load_mappings(cfg.mapping_file)
-    anilist = clients.fetch_anilist(cfg)
-    shoko_series = clients.fetch_shoko(cfg)
 
-    mal_ids, anidb_ids, tvdb_ids = compare.extract_shoko_ids(shoko_series)
+def build_context(argv=None):
+    runtime = config_mod.load_runtime(argv if argv is not None else sys.argv[1:])
 
-    results = compare.compare_collections(
-        anilist, mappings, mal_ids, anidb_ids, cfg
+    config = config_mod.ConfigStore(runtime)
+    settings = config.load()
+
+    storage = Storage(runtime.database_file, runtime.results_file)
+    state = RunState()
+    runner = Runner(config, storage, state)
+    runner.load_cached_results()
+
+    ctx = AppContext(runtime, config, storage, state, runner)
+
+    if not settings.is_configured:
+        log.warning("=" * 62)
+        log.warning("Shoko is not configured yet.")
+        if runtime.serve_web:
+            log.warning("Open http://<host>:%s/settings to finish setup.",
+                        runtime.web_port)
+        else:
+            log.warning("Edit %s and restart.", runtime.config_file)
+        log.warning("=" * 62)
+
+    return ctx
+
+
+def serve(ctx):
+    """Start the WSGI server in a background thread."""
+    from waitress import create_server
+
+    from web import create_app
+
+    app = create_app(ctx)
+    server = create_server(
+        app,
+        host=ctx.runtime.web_host,
+        port=ctx.runtime.web_port,
+        threads=8,
+        clear_untrusted_proxy_headers=True,
     )
 
-    stats = compare.build_stats(results)
-    tiers = compare.build_tiers(results)
-    diff = compare.build_diff(results, cfg.snapshot_file)
-
-    sonarr_series = []
-    sonarr_results = []
-
-    if cfg.sonarr_enabled:
-        try:
-            sonarr_series = clients.fetch_sonarr(cfg)
-            sonarr_results = compare.compare_sonarr(sonarr_series, tvdb_ids)
-        except Exception as exc:  # noqa: BLE001
-            print(f"Sonarr fetch failed, continuing without it: {exc}")
-    else:
-        print("Sonarr not configured - skipping migration comparison")
-
-    migration = compare.build_migration_stats(sonarr_results)
-    totals = compare.build_library_totals(shoko_series, sonarr_series)
-
-    # ---- Console summary ----
-    print("")
-    print("=" * 30)
-    print("Collection Progress")
-    print("=" * 30)
-    print(f"Tracked:     {stats['total']}")
-    print(f"Owned:       {stats['owned']}")
-    print(f"Missing:     {stats['missing']}")
-    print(f"Completion:  {stats['completion']}%")
-    print("")
-
-    for tier in tiers:
-        print(f"Top {tier['tier']}: {tier['completion']}% "
-              f"({tier['owned']}/{tier['total']})")
-
-    if diff.has_previous:
-        print("")
-        print(f"Since last run: {len(diff.newly_owned)} newly owned, "
-              f"{len(diff.newly_tracked)} newly tracked")
-
-    if cfg.sonarr_enabled and sonarr_results:
-        print("")
-        print("=" * 30)
-        print("Sonarr Migration")
-        print("=" * 30)
-        print(f"Shoko library:  {totals['shoko_shows']} shows, "
-              f"{totals['shoko_episodes']} episodes")
-        print(f"Sonarr library: {totals['sonarr_shows']} shows, "
-              f"{totals['sonarr_episodes']} episodes")
-        print(f"Migrated:       {migration['migrated']}/{migration['total']} "
-              f"({migration['completion']}%)")
-        print(f"Remaining:      {migration['remaining']} "
-              f"({migration['remaining_size_gb']} GB)")
-
-    # ---- Outputs ----
-    report.export_csvs(results, sonarr_results, cfg.output_dir)
-    report.export_html(
-        results, stats, tiers, diff, sonarr_results,
-        migration, totals, cfg.output_dir,
-        sonarr_enabled=cfg.sonarr_enabled and bool(sonarr_results),
-    )
-
-    compare.save_snapshot(results, cfg.snapshot_file)
-
-    elapsed = (datetime.now() - started).total_seconds()
-    print("")
-    print(f"Run complete in {elapsed:.1f}s -> "
-          f"{os.path.join(cfg.output_dir, 'report.html')}")
-
-
-class QuietHandler(SimpleHTTPRequestHandler):
-    """Static handler that doesn't spam the log with every asset request."""
-
-    def log_message(self, fmt, *args):
-        pass
-
-
-def start_web_server(cfg):
-    handler = functools.partial(QuietHandler, directory=cfg.output_dir)
-    server = ThreadingHTTPServer(("0.0.0.0", cfg.web_port), handler)
-
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=server.run, name="web", daemon=True)
     thread.start()
 
-    print(f"Dashboard served on port {cfg.web_port}")
+    log.info("Web interface listening on http://%s:%s",
+             ctx.runtime.web_host, ctx.runtime.web_port)
+    return server
 
 
-def scheduler_loop(cfg):
-    """Sleep until each scheduled time, then run."""
-    if not croniter.is_valid(cfg.cron_schedule):
-        print(f"Invalid CRON_SCHEDULE '{cfg.cron_schedule}' - "
-              f"falling back to daily at 04:00")
-        cfg.cron_schedule = "0 4 * * *"
+def main(argv=None):
+    argv = argv if argv is not None else sys.argv[1:]
 
-    while True:
-        now = datetime.now()
-        next_run = croniter(cfg.cron_schedule, now).get_next(datetime)
-        wait = max((next_run - now).total_seconds(), 1)
+    log.info("=" * 62)
+    log.info(" Anime Collection Tracker %s", version_string())
+    log.info("=" * 62)
 
-        print(f"Next run: {next_run:%Y-%m-%d %H:%M:%S} "
-              f"({wait / 3600:.1f}h away)")
+    ctx = build_context(argv)
+    runtime = ctx.runtime
 
-        time.sleep(wait)
+    # ---- one-shot mode ----
+    if runtime.run_once:
+        log.info("Running once (--once), then exiting")
+        ok = ctx.runner.run(trigger="once")
+        return 0 if ok else 1
 
+    shutdown = threading.Event()
+
+    def handle_signal(signum, _frame):
+        log.info("Received signal %s - shutting down", signum)
+        shutdown.set()
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    server = None
+    if runtime.serve_web:
+        server = serve(ctx)
+    else:
+        log.info("Web interface disabled (SERVE_WEB=false)")
+
+    scheduler = Scheduler(ctx.config, ctx.runner, ctx.state)
+    ctx.scheduler = scheduler
+    scheduler.start()
+
+    if ctx.config.settings.schedule.run_on_start:
+        if ctx.config.settings.is_configured:
+            log.info("Running on start")
+            ctx.runner.run_in_background(trigger="startup")
+        else:
+            log.info("Skipping the start-up run until Shoko is configured")
+
+    shutdown.wait()
+
+    scheduler.stop()
+    if server is not None:
         try:
-            run_once(cfg)
-        except Exception:  # noqa: BLE001 - a failed run must not kill the loop
-            print("Scheduled run failed:")
-            traceback.print_exc()
+            server.close()
+        except Exception:  # noqa: BLE001 - best effort on the way out
+            pass
 
-
-def main():
-    print("=" * 46)
-    print(f" Anime Collection Tracker v{VERSION}")
-    print("=" * 46)
-
-    cfg = load_config()
-
-    once = "--once" in sys.argv or os.environ.get("RUN_ONCE", "").lower() in (
-        "1", "true", "yes"
-    )
-
-    if cfg.serve_web and not once:
-        start_web_server(cfg)
-
-    if cfg.run_on_start or once:
-        try:
-            run_once(cfg)
-        except Exception:  # noqa: BLE001
-            print("Initial run failed:")
-            traceback.print_exc()
-            if once:
-                sys.exit(1)
-            print("Continuing to scheduled runs.")
-
-    if once:
-        return
-
-    scheduler_loop(cfg)
+    log.info("Goodbye")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

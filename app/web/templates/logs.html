@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+  <div class="toolbar">
+    <h2>Recent activity</h2>
+    <span class="spacer"></span>
+    <div class="check" style="margin:0">
+      <input type="checkbox" id="log-autorefresh" checked>
+      <label for="log-autorefresh">Auto-refresh</label>
+    </div>
+  </div>
+
+  <div class="log-view" id="log-view">
+    <p class="empty-state">Loading...</p>
+  </div>
+
+  <p class="hint" style="margin-top:10px">
+    This is the in-memory tail. Full history is in <code>docker logs anime-tracker</code>.
+  </p>
+</section>
+
+{% endblock %}

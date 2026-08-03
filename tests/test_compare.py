@@ -1,0 +1,207 @@
+"""Ownership matching - the rules that decide what shows as owned."""
+
+import config as config_mod
+from core import compare
+
+
+def media(anilist_id, rank, popularity=100000, score=80, prequel=False, **kwargs):
+    entry = {
+        "id": anilist_id,
+        "rank": rank,
+        "title": {"english": f"Show {anilist_id}", "romaji": f"Shou {anilist_id}"},
+        "averageScore": score,
+        "popularity": popularity,
+        "episodes": 12,
+        "startDate": {"year": 2015},
+        "coverImage": {"large": "http://img/x.jpg"},
+        "relations": {"edges": []},
+    }
+    if prequel:
+        entry["relations"]["edges"].append(
+            {"relationType": "PREQUEL", "node": {"id": 1, "type": "ANIME"}}
+        )
+    entry.update(kwargs)
+    return entry
+
+
+# ==========================
+# ID extraction
+# ==========================
+
+def test_extracts_ids_from_the_ids_object():
+    mal, anidb, tvdb = compare.extract_shoko_ids([
+        {"IDs": {"AniDB": 123, "TvDB": [456], "MAL": [789]}},
+    ])
+    assert anidb == {"123"}
+    assert tvdb == {"456"}
+    assert mal == {"789"}
+
+
+def test_extracts_ids_from_the_links_fallback():
+    mal, anidb, tvdb = compare.extract_shoko_ids([
+        {"Links": [
+            {"Name": "AniDB", "URL": "https://anidb.net/anime/999"},
+            {"Name": "MyAnimeList", "URL": "https://myanimelist.net/anime/555"},
+            {"Name": "TheTVDB", "URL": "https://thetvdb.com/series/777"},
+        ]},
+    ])
+    assert anidb == {"999"}
+    assert mal == {"555"}
+    assert tvdb == {"777"}
+
+
+def test_id_extraction_survives_empty_and_missing_shapes():
+    mal, anidb, tvdb = compare.extract_shoko_ids([
+        {}, {"IDs": {}}, {"IDs": {"AniDB": None}}, {"Links": []},
+    ])
+    assert (mal, anidb, tvdb) == (set(), set(), set())
+
+
+# ==========================
+# Episode counting
+# ==========================
+
+def test_counts_episodes_across_known_shapes():
+    total, suspect = compare.count_shoko_episodes([
+        {"Sizes": {"Local": {"Episodes": 12}}},
+        {"Sizes": {"Local": {"Total": 5}}},
+        {"EpisodeCount": 3},
+    ])
+    assert total == 20
+    assert suspect is False
+
+
+def test_flags_a_zero_count_on_a_non_empty_library():
+    total, suspect = compare.count_shoko_episodes([{"Name": "x"}])
+    assert total == 0
+    assert suspect is True
+
+
+def test_empty_library_is_not_suspect():
+    total, suspect = compare.count_shoko_episodes([])
+    assert (total, suspect) == (0, False)
+
+
+# ==========================
+# Ownership
+# ==========================
+
+def _settings(min_popularity=0):
+    settings = config_mod.AniListSettings()
+    settings.min_popularity = min_popularity
+    return settings
+
+
+def test_matches_ownership_on_mal_id():
+    results = compare.compare_collections(
+        [media(1, 1)],
+        {1: {"mal_id": "100", "anidb_id": "200"}},
+        mal_ids={"100"}, anidb_ids=set(), settings=_settings(),
+    )
+    assert results[0].owned is True
+
+
+def test_matches_ownership_on_anidb_id_alone():
+    results = compare.compare_collections(
+        [media(1, 1)],
+        {1: {"mal_id": "100", "anidb_id": "200"}},
+        mal_ids=set(), anidb_ids={"200"}, settings=_settings(),
+    )
+    assert results[0].owned is True
+
+
+def test_unmatched_entry_is_missing():
+    results = compare.compare_collections(
+        [media(1, 1)],
+        {1: {"mal_id": "100", "anidb_id": "200"}},
+        mal_ids={"999"}, anidb_ids={"888"}, settings=_settings(),
+    )
+    assert results[0].owned is False
+
+
+def test_entries_without_a_mapping_are_skipped():
+    results = compare.compare_collections(
+        [media(1, 1), media(2, 2)],
+        {1: {"mal_id": "100"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert [r.anilist_id for r in results] == [1]
+
+
+def test_popularity_threshold_filters_entries():
+    results = compare.compare_collections(
+        [media(1, 1, popularity=10), media(2, 2, popularity=90000)],
+        {1: {"mal_id": "1"}, 2: {"mal_id": "2"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(min_popularity=50000),
+    )
+    assert [r.anilist_id for r in results] == [2]
+
+
+def test_duplicate_mal_ids_keep_the_best_rank():
+    results = compare.compare_collections(
+        [media(1, 5), media(2, 2)],
+        {1: {"mal_id": "same"}, 2: {"mal_id": "same"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert len(results) == 1
+    assert results[0].rank == 2
+
+
+def test_franchise_root_detection():
+    results = compare.compare_collections(
+        [media(1, 1), media(2, 2, prequel=True)],
+        {1: {"mal_id": "1"}, 2: {"mal_id": "2"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    roots = {r.anilist_id: r.is_franchise_root for r in results}
+    assert roots == {1: True, 2: False}
+
+
+def test_results_are_sorted_by_rank():
+    results = compare.compare_collections(
+        [media(1, 9), media(2, 3), media(3, 6)],
+        {1: {"mal_id": "1"}, 2: {"mal_id": "2"}, 3: {"mal_id": "3"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert [r.rank for r in results] == [3, 6, 9]
+
+
+def test_title_prefers_english_then_romaji():
+    entry = media(1, 1)
+    entry["title"] = {"english": None, "romaji": "Romaji Name"}
+    results = compare.compare_collections(
+        [entry], {1: {"mal_id": "1"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert results[0].title == "Romaji Name"
+
+
+def test_recommendation_score_blends_rating_and_reach():
+    # Equal scores: the more popular series must rank higher.
+    assert compare.recommendation_score(80, 1000000) > compare.recommendation_score(80, 1000)
+    # Zero popularity must not blow up on log10.
+    assert compare.recommendation_score(80, 0) > 0
+
+
+# ==========================
+# Sonarr
+# ==========================
+
+def test_sonarr_matches_on_tvdb_id():
+    results = compare.compare_sonarr(
+        [
+            {"title": "A", "tvdbId": 111, "statistics": {"sizeOnDisk": 1073741824,
+                                                         "episodeFileCount": 10,
+                                                         "episodeCount": 12}},
+            {"title": "B", "tvdbId": 222, "statistics": {}},
+        ],
+        tvdb_ids={"111"},
+    )
+    assert results[0].migrated is True
+    assert results[0].size_gb == 1.0
+    assert results[1].migrated is False
+
+
+def test_sonarr_series_without_a_tvdb_id_is_not_migrated():
+    results = compare.compare_sonarr([{"title": "A", "tvdbId": None}], tvdb_ids={"111"})
+    assert results[0].migrated is False

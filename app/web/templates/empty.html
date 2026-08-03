@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+  <div class="card-head"><h2>No results yet</h2></div>
+
+  {% if status.running %}
+    <p class="empty-state">
+      A run is in progress{% if status.message %} - {{ status.message }}{% endif %}.
+      This page refreshes when it finishes.
+    </p>
+    <div class="phase-track" id="phase-track"></div>
+  {% elif status.last_error %}
+    <div class="banner banner-error">
+      <span class="banner-icon" aria-hidden="true">&#9888;</span>
+      <div>
+        <strong>The last run failed.</strong>
+        <div>{{ status.last_error }}</div>
+      </div>
+    </div>
+    <p class="hint">
+      Check the <a href="{{ url_for('logs_page') }}">logs</a>, or review your
+      <a href="{{ url_for('settings_page') }}">settings</a>.
+    </p>
+  {% else %}
+    <p class="empty-state">
+      Nothing has been compared yet. Hit <strong>Run now</strong> to build your
+      first report{% if status.next_run_at %}, or wait for the scheduled run at
+      {{ status.next_run_at.replace('T', ' ') }}{% endif %}.
+    </p>
+  {% endif %}
+</section>
+
+{% endblock %}

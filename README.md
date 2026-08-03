@@ -1,191 +1,164 @@
 # Anime Collection Tracker
 
-Compares an AniList Top TV list against your Shoko library, and tracks your
-Sonarr → Shoko migration. Outputs CSVs and an HTML dashboard, served over HTTP,
-on a schedule.
+A self-hosted web app that compares an AniList ranked list against your
+[Shoko](https://shokoanime.com/) library, and tracks a Sonarr → Shoko
+migration. Runs on a schedule in Docker, with a built-in dashboard and
+settings UI.
 
-Rewritten from PowerShell to Python — no PowerShell runtime, image drops from
-roughly 1.2 GB to around 150 MB.
+![version](https://img.shields.io/badge/version-4.0-blue)
+
+## What it does
+
+- **Collection tracking** — how much of the AniList top *N* you actually own,
+  broken down by rank tier, decade and genre.
+- **Recommendations** — the highest-value things you're missing, filtered to
+  franchise roots so sequels don't clutter the list.
+- **Migration tracking** — which Sonarr series are already in Shoko, matched on
+  TVDB ID, and how much is left to move.
+- **Trend history** — completion over time, so progress is visible run to run.
+
+Everything is configured from the web UI. Nothing needs to be edited by hand.
+
+## Quick start
+
+```bash
+docker run -d \
+  --name anime-tracker \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v /mnt/user/appdata/anime-tracker:/config \
+  -e PUID=99 -e PGID=100 -e TZ=Australia/Hobart \
+  ghcr.io/dubberness/anime-tracker:latest
+```
+
+Then open `http://<host>:8080/`. It lands on the settings page — add your Shoko
+URL and API key, hit **Test connection**, then **Save**. The first run starts
+automatically.
+
+The anime ID mapping file downloads itself; there is no manual setup step.
+
+### Unraid
+
+Use **Docker → Add Container** so Unraid stores a template (a container created
+by raw `docker run` shows without an icon or WebUI button). Or import
+[`unraid-template.xml`](unraid-template.xml).
+
+| Field | Value |
+|---|---|
+| Repository | `ghcr.io/dubberness/anime-tracker:latest` |
+| WebUI | `http://[IP]:[PORT:8080]/` |
+| Port | `8080` → `8080` |
+| Path | `/mnt/user/appdata/anime-tracker` → `/config` |
+| Variables | `PUID=99`, `PGID=100`, `TZ=Australia/Hobart` |
+
+### Compose
+
+```bash
+docker compose up -d
+```
+
+## Configuration
+
+All settings live in `/config/config.json` and are editable from the
+**Settings** page:
+
+| Setting | Default | Notes |
+|---|---|---|
+| Shoko URL / API key | — | Required |
+| Sonarr URL / API key | — | Optional; migration section hides without it |
+| Formats | `TV` | TV, Movie, OVA, ONA, Special… |
+| Ranked by | Popularity | Popularity, Score, Trending, Favourites |
+| How many | `1000` | How far down the list to track |
+| Minimum popularity | `50000` | Skips obscure entries |
+| Tiers | `100, 250, 500, 1000` | Rank tiers for the progress bars |
+| Cron schedule | `0 4 * * *` | Container timezone |
+| Run on start | on | Run immediately when the container starts |
+| Cache lifetime | `24h` | How long before AniList is re-fetched |
+
+### Environment variables
+
+Deployment-level only. **Any setting also set as an env var overrides the
+config file and is greyed out in the UI** — so leave these unset unless you
+specifically want to pin a value.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PUID` / `PGID` | `99` / `100` | Unraid `nobody:users` |
+| `TZ` | `Australia/Hobart` | Schedule and timestamps |
+| `WEB_PORT` | `8080` | Dashboard port |
+| `SERVE_WEB` | `true` | Set `false` for a headless scheduler |
+| `LOG_LEVEL` | `INFO` | `DEBUG` for verbose logs |
+| `RUN_ONCE` | unset | Run once and exit (no server/scheduler) |
+| `CONFIG_DIR` | `/config` | Where state is stored |
+| `SHOKO_URL`, `SHOKO_API_KEY`, `SONARR_URL`, `SONARR_API_KEY`, `CRON_SCHEDULE`, `RUN_ON_START`, `MAX_RESULTS`, `MIN_POPULARITY`, `CACHE_MAX_AGE_HOURS`, `MAPPING_FILE` | unset | Pin a setting and lock it in the UI |
 
 ## Layout
 
 ```
 Dockerfile
 docker-compose.yml
-entrypoint.sh          PUID/PGID + timezone, then drops privileges
-requirements.txt
-config.example.json    reference only - real config.json is gitignored
-.github/workflows/
-  docker-build.yml     builds + pushes to GHCR on push to main
+unraid-template.xml       Unraid Docker template
+entrypoint.sh             PUID/PGID + timezone, then drops privileges
+pyproject.toml            ruff + pytest config
 app/
-  main.py              orchestration, scheduler, web server
-  config.py            config loading and validation
-  clients.py           AniList / Shoko / Sonarr APIs, retry+backoff
-  compare.py           ID matching, franchise roots, stats, diffs
-  report.py            CSV + HTML dashboard
+  main.py                 wiring, signals, startup
+  config.py               schema, persistence, v1 migration, env overrides
+  storage.py              SQLite run history + latest results
+  runner.py               the tracking run
+  scheduler.py            cron loop
+  state.py                thread-safe run state
+  logging_setup.py        stdout logging + in-memory ring buffer
+  clients/                anilist, shoko, sonarr, mappings
+  core/                   compare, stats, models (pure logic)
+  web/                    Flask app, templates, static assets
+tests/                    pytest suite
 ```
 
-## Getting this onto GitHub
+## How matching works
+
+- **AniList ↔ Shoko** — matched on **MAL ID or AniDB ID** (either is enough),
+  via the [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs) mapping.
+- **Sonarr ↔ Shoko** — matched on **TVDB ID**.
+- Shoko exposes IDs differently across versions, so both `IDs.*` and the
+  `Links` list are checked. If match rates look wrong, use
+  **Settings → Diagnostics → Check Shoko ID fields** to see what your instance
+  actually returns.
+- **Franchise root** = an entry with no `PREQUEL` relation. One-hop check, so a
+  franchise with gaps could slip through.
+- **Recommendation score** = `averageScore × 0.8 + log10(popularity) × 10`.
+
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | Liveness (used by the Docker healthcheck) |
+| `GET /api/status` | Current run state |
+| `GET /api/results` | Full latest result set |
+| `GET /api/history` | Run history for the trend chart |
+| `POST /api/run` | Trigger a run |
+| `GET/POST /api/settings` | Read/update settings (secrets masked on read) |
+| `POST /api/test/<service>` | Test a connection |
+| `GET /api/diagnostics/shoko` | Report Shoko's ID field shapes |
+
+## Development
 
 ```bash
-cd anime-tracker-native
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/<your-username>/anime-tracker.git
-git push -u origin main
+python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
+./venv/bin/pip install pytest ruff
+
+./venv/bin/pytest -q
+./venv/bin/ruff check app tests
+
+CONFIG_DIR=./dev-config ./venv/bin/python app/main.py
 ```
 
-Create the repo on GitHub first (github.com → New repository), or via the CLI:
-`gh repo create anime-tracker --private --source=. --push`.
-
-The included `.github/workflows/docker-build.yml` builds and pushes the image
-to GitHub Container Registry (GHCR) automatically on every push to `main` —
-no extra setup needed, it uses the token GitHub provides to Actions by
-default. After your first push, check the **Actions** tab to watch it build,
-then **Packages** (on your profile or the repo sidebar) for the published
-image.
-
-By default a package published this way is **private**, visible only to you.
-To pull it from Tower without authenticating, open the package on GitHub →
-**Package settings** → change visibility to public, or see "Private image"
-below to keep it private and authenticate instead.
-
-`.gitignore` already excludes `config.json` (your real API keys) — only
-`config.example.json` gets committed.
-
-## Installing on Tower (from GHCR)
-
-Once Actions has built the image, SSH into Tower:
-
-```bash
-docker pull ghcr.io/<your-username>/anime-tracker:latest
-
-mkdir -p /mnt/user/appdata/anime-tracker/output
-
-curl -sL -o /mnt/user/appdata/anime-tracker/anime_ids.json \
-  https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json
-
-docker run -d \
-  --name anime-tracker \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -v /mnt/user/appdata/anime-tracker:/config \
-  -v /mnt/user/appdata/anime-tracker/output:/output \
-  -e PUID=99 -e PGID=100 -e TZ=Australia/Hobart \
-  ghcr.io/<your-username>/anime-tracker:latest
-```
-
-First run writes a `config.json` template and exits — edit it with your real
-URLs and API keys, then `docker restart anime-tracker`.
-
-Or point `docker-compose.yml`'s `image:` at the GHCR tag instead of building
-locally.
-
-### Private image
-
-If you kept the package private, authenticate Tower once with a
-[Personal Access Token](https://github.com/settings/tokens) (classic, with
-`read:packages` scope):
-
-```bash
-echo "<your-PAT>" | docker login ghcr.io -u <your-username> --password-stdin
-```
-
-Then `docker pull` works as above.
-
-### Updating
-
-Push a change to `main`, wait for Actions to finish, then on Tower:
-
-```bash
-docker pull ghcr.io/<your-username>/anime-tracker:latest
-docker stop anime-tracker && docker rm anime-tracker
-# re-run the docker run command above
-```
-
-(Or `docker compose pull && docker compose up -d` if using Compose.)
-
-## Building locally instead
-
-If you'd rather not use GitHub at all:
-
-```bash
-docker build -t anime-tracker:latest .
-docker compose up -d
-```
-
-### Unraid
-
-Add a container manually, or use the Docker tab with:
-
-- Repository: `anime-tracker:latest`
-- Port: `8080` → `8080`
-- Path: `/mnt/user/appdata/anime-tracker` → `/config`
-- Path: `/mnt/user/appdata/anime-tracker/output` → `/output`
-- Variables: `PUID=99`, `PGID=100`, `TZ=Australia/Hobart`
-
-## First run
-
-1. Start the container. It writes a `config.json` template to `/config` and
-   exits with instructions in the log.
-2. Edit `/mnt/user/appdata/anime-tracker/config.json`:
-
-```json
-{
-  "ShokoURL": "http://192.168.5.145:8111",
-  "APIKey": "your-shoko-api-key",
-  "MappingFile": "/config/anime_ids.json",
-  "SonarrURL": "http://192.168.5.145:8989",
-  "SonarrAPIKey": "your-sonarr-api-key"
-}
-```
-
-3. Put the Kometa-Team Anime-IDs mapping at
-   `/mnt/user/appdata/anime-tracker/anime_ids.json`
-   (https://github.com/Kometa-Team/Anime-IDs).
-4. Start it again.
-
-`MappingFile` must be the **container** path (`/config/anime_ids.json`), not an
-Unraid host path.
-
-Sonarr is optional — leave those two keys out and the migration section is
-skipped entirely.
-
-## Access
-
-- Dashboard: `http://<unraid-ip>:8080/`
-- CSVs: same port (`/missing.csv`, `/sonarr_remaining.csv`, etc.)
-- Logs: `docker logs anime-tracker`
-
-## Environment variables
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `PUID` / `PGID` | `99` / `100` | Unraid `nobody:users` |
-| `TZ` | `Australia/Hobart` | Timezone for schedule and timestamps |
-| `CRON_SCHEDULE` | `0 4 * * *` | Standard cron expression |
-| `RUN_ON_START` | `true` | Run once immediately on start |
-| `SERVE_WEB` | `true` | Serve the dashboard |
-| `WEB_PORT` | `8080` | Dashboard port |
-| `MAX_RESULTS` | `1000` | How many AniList TV series to track |
-| `MIN_POPULARITY` | `50000` | Skip series below this AniList user count |
-| `CACHE_MAX_AGE_HOURS` | `24` | AniList cache lifetime |
-| `RUN_ONCE` | unset | Run once and exit (no scheduler/server) |
-
-## One-off run
-
-```bash
-docker compose run --rm anime-tracker python3 /app/main.py --once
-```
+Code is kept Python 3.9-compatible so the suite runs against a system Python
+without building the image; the container itself runs 3.12.
 
 ## Notes
 
-- Scheduling is built in (`croniter`), so there's no cron daemon in the image.
+- Scheduling is in-process (`croniter`) — no cron daemon in the image.
 - If AniList is unreachable, a stale cache is used rather than failing the run.
-- Ownership matches on MAL **or** AniDB ID; Sonarr matches on TVDB ID. Each is
-  read from Shoko's `IDs` object with a fallback to the `Links` list, since the
-  shape varies by Shoko version.
-- Shoko's per-series episode count path also varies by version. If the totals
-  show 0, the log says so explicitly.
+- Sonarr failures degrade gracefully; the rest of the run still completes.
+- Secrets are masked in the settings UI and never sent to the browser in full.
+- CSV export was removed in v4 — the dashboard and `/api/results` replace it.

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ request.cookies.get('theme', '') }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ title }}{% endblock %} &middot; Anime Tracker</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127902;</text></svg>">
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">&#9673;</span>
+      <span class="brand-text">Anime Tracker</span>
+    </div>
+
+    <nav class="nav" aria-label="Main">
+      <a class="nav-item {% if request.endpoint == 'dashboard' %}is-active{% endif %}"
+         href="{{ url_for('dashboard') }}">
+        <span class="nav-icon" aria-hidden="true">&#9636;</span> Dashboard
+      </a>
+      <a class="nav-item {% if request.endpoint == 'library' %}is-active{% endif %}"
+         href="{{ url_for('library') }}">
+        <span class="nav-icon" aria-hidden="true">&#9776;</span> Library
+      </a>
+      <a class="nav-item {% if request.endpoint == 'migration' %}is-active{% endif %}"
+         href="{{ url_for('migration') }}">
+        <span class="nav-icon" aria-hidden="true">&#8646;</span> Migration
+      </a>
+      <a class="nav-item {% if request.endpoint == 'logs_page' %}is-active{% endif %}"
+         href="{{ url_for('logs_page') }}">
+        <span class="nav-icon" aria-hidden="true">&#9782;</span> Logs
+      </a>
+      <a class="nav-item {% if request.endpoint == 'settings_page' %}is-active{% endif %}"
+         href="{{ url_for('settings_page') }}">
+        <span class="nav-icon" aria-hidden="true">&#9881;</span> Settings
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="version">v{{ version }}</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-button menu-toggle" id="menu-toggle"
+              aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
+
+      <div class="topbar-title">{% block heading %}{{ title }}{% endblock %}</div>
+
+      <div class="topbar-actions">
+        <div class="run-status" id="run-status" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="run-status-text" id="run-status-text">Running</span>
+        </div>
+
+        <button class="button button-primary" id="run-now">
+          <span class="button-label">Run now</span>
+        </button>
+
+        <button class="icon-button" id="theme-toggle" aria-label="Toggle theme"
+                title="Toggle light/dark">&#9681;</button>
+      </div>
+    </header>
+
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="foot">
+      <span>Anime Collection Tracker v{{ version }}</span>
+      {% if data and data.generated_at %}
+        <span class="dot">&middot;</span>
+        <span>Last run {{ data.generated_at.replace('T', ' ') }}</span>
+      {% endif %}
+    </footer>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

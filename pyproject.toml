@@ -1,0 +1,25 @@
+[tool.ruff]
+# The image runs 3.12, but the code is kept 3.9-compatible so the suite can be
+# run against a system Python without building the container first.
+target-version = "py39"
+line-length = 100
+exclude = [".git", "__pycache__", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+# Logging has to be configured before the app modules import, so main.py and
+# conftest.py both need imports after a statement.
+"app/main.py" = ["E402"]
+"tests/conftest.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "clients", "config", "core", "logging_setup", "main",
+    "runner", "scheduler", "state", "storage", "version", "web",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

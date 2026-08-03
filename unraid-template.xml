@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>anime-tracker</Name>
+  <Repository>ghcr.io/dubberness/anime-tracker:latest</Repository>
+  <Registry>https://github.com/dubberness/anime-tracker/pkgs/container/anime-tracker</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/dubberness/anime-tracker/issues</Support>
+  <Project>https://github.com/dubberness/anime-tracker</Project>
+  <Overview>
+    Tracks how much of an AniList ranked list is present in your Shoko library,
+    and how far a Sonarr &#8594; Shoko migration has progressed.
+
+    Everything is configured from the built-in web UI - open the WebUI button
+    after starting, fill in your Shoko URL and API key on the Settings page,
+    and hit Save. The anime ID mapping file downloads itself.
+  </Overview>
+  <Category>MediaApp:Video Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/dubberness/anime-tracker/main/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp"
+          Description="Port for the dashboard."
+          Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/anime-tracker"
+          Mode="rw"
+          Description="Holds config.json, the run history database and cached AniList data."
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/anime-tracker</Config>
+
+  <Config Name="PUID" Target="PUID" Default="99"
+          Description="User ID - 99 is nobody on Unraid."
+          Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+
+  <Config Name="PGID" Target="PGID" Default="100"
+          Description="Group ID - 100 is users on Unraid."
+          Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+
+  <Config Name="TZ" Target="TZ" Default="Australia/Hobart"
+          Description="Timezone, used for the schedule and timestamps."
+          Type="Variable" Display="always" Required="false" Mask="false">Australia/Hobart</Config>
+
+  <Config Name="Log level" Target="LOG_LEVEL" Default="INFO"
+          Description="INFO or DEBUG."
+          Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+</Container>

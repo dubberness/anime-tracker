@@ -1,22 +1,19 @@
 services:
   anime-tracker:
-    build: .
-    # Once pushed to GHCR via the Actions workflow, comment out `build: .`
-    # above and uncomment this instead:
-    # image: ghcr.io/<your-username>/anime-tracker:latest
-    image: anime-tracker:latest
+    # Pull the published image by default; swap to `build: .` to build locally.
+    image: ghcr.io/dubberness/anime-tracker:latest
+    # build: .
     container_name: anime-tracker
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
       - /mnt/user/appdata/anime-tracker:/config
-      - /mnt/user/appdata/anime-tracker/output:/output
     environment:
       - PUID=99
       - PGID=100
       - TZ=Australia/Hobart
-      - CRON_SCHEDULE=0 4 * * *
-      - RUN_ON_START=true
-      - SERVE_WEB=true
       - WEB_PORT=8080
+      # Everything else - schedule, URLs, API keys, what to track - is managed
+      # from the settings page and stored in /config/config.json. Setting one
+      # of those as an env var here locks that field in the UI.

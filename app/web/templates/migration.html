@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not data.sonarr_enabled %}
+<div class="banner banner-warning">
+  <span class="banner-icon" aria-hidden="true">&#9888;</span>
+  <div>
+    <strong>Sonarr isn't configured.</strong>
+    Add your Sonarr URL and API key on the
+    <a href="{{ url_for('settings_page') }}">settings page</a> to track the migration.
+  </div>
+</div>
+{% else %}
+
+<section class="card section">
+  <div class="hero">
+    <div class="hero-figure">
+      <p class="eyebrow">Sonarr &rarr; Shoko</p>
+      <span class="hero-number">{{ migration.completion }}%</span>
+      <span class="hero-label">
+        {{ migration.migrated }} of {{ migration.total }} Sonarr series are already in Shoko
+      </span>
+    </div>
+
+    <div class="hero-meta">
+      <div class="tile">
+        <span class="label">Left to move</span>
+        <span class="value">{{ migration.remaining }}</span>
+      </div>
+      <div class="tile">
+        <span class="label">Remaining size</span>
+        <span class="value">{{ migration.remaining_size_gb }} GB</span>
+      </div>
+      <div class="tile">
+        <span class="label">Shoko shows</span>
+        <span class="value">{{ totals.shoko_shows }}</span>
+      </div>
+      <div class="tile">
+        <span class="label">Sonarr shows</span>
+        <span class="value">{{ totals.sonarr_shows }}</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="card section">
+  <div class="card-head">
+    <h2>Still only in Sonarr</h2>
+    <span class="sub">{{ migration.remaining }} series &middot; {{ migration.remaining_size_gb }} GB</span>
+  </div>
+
+  {% set remaining = sonarr | rejectattr('migrated') | list %}
+  {% if remaining %}
+  <div class="table-wrap" data-table>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="text">Status</th>
+          <th scope="col" class="sortable" data-type="num">Episodes</th>
+          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in remaining | sort(attribute='size_gb', reverse=true) %}
+        <tr>
+          <td class="title">
+            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+               target="_blank" rel="noopener">{{ row.title }}</a>
+          </td>
+          <td>{{ row.status }}</td>
+          <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
+          <td class="num">{{ row.size_gb }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">Migration complete - nothing left in Sonarr that isn't already in Shoko.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Already in both</h2>
+    <span class="sub">{{ migration.migrated }} series &middot; {{ migration.migrated_size_gb }} GB</span>
+  </div>
+
+  {% set matched = sonarr | selectattr('migrated') | list %}
+  {% if matched %}
+  <div class="table-wrap" data-table>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="text">Status</th>
+          <th scope="col" class="sortable" data-type="num">Episodes</th>
+          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in matched | sort(attribute='title') %}
+        <tr>
+          <td class="title">
+            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+               target="_blank" rel="noopener">{{ row.title }}</a>
+          </td>
+          <td>{{ row.status }}</td>
+          <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
+          <td class="num">{{ row.size_gb }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">Nothing matched yet.</p>
+  {% endif %}
+</section>
+
+{% endif %}
+
+{% endblock %}

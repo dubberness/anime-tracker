@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% macro locked(path) -%}
+  {% if path in env_locked %}
+    <span class="locked-note" title="Set by an environment variable">&#128274; set by env</span>
+  {% endif %}
+{%- endmacro %}
+
+{% block content %}
+
+{% if setup or not is_configured %}
+<div class="setup-banner" id="setup-banner">
+  <strong>Finish setting up.</strong>
+  Add your Shoko URL and API key below, then save. The first run starts
+  automatically once Shoko is reachable.
+</div>
+{% endif %}
+
+<form id="settings-form" autocomplete="off">
+
+<div class="grid grid-2">
+
+  <!-- ---------- Shoko ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>Shoko</h2></div>
+
+    <div class="field">
+      <label for="shoko-url">Server URL {{ locked('shoko.url') }}</label>
+      <input type="text" id="shoko-url" data-path="shoko.url"
+             value="{{ values.shoko.url }}" placeholder="http://192.168.1.10:8111"
+             {% if 'shoko.url' in env_locked %}disabled{% endif %}>
+      <p class="hint">Include the port. No trailing slash needed.</p>
+    </div>
+
+    <div class="field">
+      <label for="shoko-key">API key {{ locked('shoko.api_key') }}</label>
+      <input type="password" id="shoko-key" data-path="shoko.api_key"
+             value="{{ values.shoko.api_key }}" placeholder="Leave blank to keep the current key"
+             {% if 'shoko.api_key' in env_locked %}disabled{% endif %}>
+      <p class="hint">Shoko &rarr; Settings &rarr; API keys. Leave untouched to keep the saved key.</p>
+    </div>
+
+    <button type="button" class="button" data-test="shoko">Test connection</button>
+    <div class="test-result" id="test-result-shoko"></div>
+  </section>
+
+  <!-- ---------- Sonarr ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>Sonarr</h2><span class="sub">optional</span></div>
+
+    <div class="check">
+      <input type="checkbox" id="sonarr-enabled" data-path="sonarr.enabled"
+             {% if values.sonarr.enabled %}checked{% endif %}>
+      <label for="sonarr-enabled">Track the Sonarr &rarr; Shoko migration</label>
+    </div>
+
+    <div class="field">
+      <label for="sonarr-url">Server URL {{ locked('sonarr.url') }}</label>
+      <input type="text" id="sonarr-url" data-path="sonarr.url"
+             value="{{ values.sonarr.url }}" placeholder="http://192.168.1.10:8989"
+             {% if 'sonarr.url' in env_locked %}disabled{% endif %}>
+    </div>
+
+    <div class="field">
+      <label for="sonarr-key">API key {{ locked('sonarr.api_key') }}</label>
+      <input type="password" id="sonarr-key" data-path="sonarr.api_key"
+             value="{{ values.sonarr.api_key }}" placeholder="Leave blank to keep the current key"
+             {% if 'sonarr.api_key' in env_locked %}disabled{% endif %}>
+      <p class="hint">Sonarr &rarr; Settings &rarr; General &rarr; Security.</p>
+    </div>
+
+    <button type="button" class="button" data-test="sonarr">Test connection</button>
+    <div class="test-result" id="test-result-sonarr"></div>
+  </section>
+
+</div>
+
+<div class="grid grid-2" style="margin-top:16px">
+
+  <!-- ---------- Tracking ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>What to track</h2></div>
+
+    <div class="field">
+      <label>Formats</label>
+      <div class="checkbox-grid">
+        {% for fmt in valid_formats %}
+        <div class="check">
+          <input type="checkbox" id="fmt-{{ fmt }}" data-path="anilist.formats"
+                 data-multi="1" value="{{ fmt }}"
+                 {% if fmt in values.anilist.formats %}checked{% endif %}>
+          <label for="fmt-{{ fmt }}">{{ fmt.replace('_', ' ').title() }}</label>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="sort">Ranked by</label>
+        <select id="sort" data-path="anilist.sort">
+          {% for option in valid_sorts %}
+          <option value="{{ option }}" {% if values.anilist.sort == option %}selected{% endif %}>
+            {{ option.replace('_DESC', '').replace('_', ' ').title() }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="max-results">How many {{ locked('anilist.max_results') }}</label>
+        <input type="number" id="max-results" data-path="anilist.max_results" min="1"
+               value="{{ values.anilist.max_results }}"
+               {% if 'anilist.max_results' in env_locked %}disabled{% endif %}>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="min-pop">Minimum popularity {{ locked('anilist.min_popularity') }}</label>
+        <input type="number" id="min-pop" data-path="anilist.min_popularity" min="0"
+               value="{{ values.anilist.min_popularity }}"
+               {% if 'anilist.min_popularity' in env_locked %}disabled{% endif %}>
+        <p class="hint">Skip series with fewer AniList users than this.</p>
+      </div>
+
+      <div class="field">
+        <label for="tiers">Tiers</label>
+        <input type="text" id="tiers" data-path="ui.tiers" data-list="1"
+               value="{{ values.ui.tiers | join(', ') }}">
+        <p class="hint">Comma-separated rank tiers for the progress bars.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- Schedule ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>Schedule</h2></div>
+
+    <div class="field">
+      <label for="cron">Cron expression {{ locked('schedule.cron') }}</label>
+      <input type="text" id="cron" data-path="schedule.cron"
+             value="{{ values.schedule.cron }}"
+             {% if 'schedule.cron' in env_locked %}disabled{% endif %}>
+      <p class="hint">
+        Standard 5-field cron, in the container timezone.
+        {% if status.next_run_at %}Next run: {{ status.next_run_at.replace('T', ' ') }}.{% endif %}
+      </p>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="run-on-start" data-path="schedule.run_on_start"
+             {% if values.schedule.run_on_start %}checked{% endif %}
+             {% if 'schedule.run_on_start' in env_locked %}disabled{% endif %}>
+      <label for="run-on-start">Run once immediately on start-up</label>
+    </div>
+
+    <div class="field">
+      <label for="cache-age">AniList cache lifetime (hours) {{ locked('anilist.cache_max_age_hours') }}</label>
+      <input type="number" id="cache-age" data-path="anilist.cache_max_age_hours" min="0"
+             value="{{ values.anilist.cache_max_age_hours }}"
+             {% if 'anilist.cache_max_age_hours' in env_locked %}disabled{% endif %}>
+      <p class="hint">AniList is only re-downloaded once the cache is older than this.</p>
+    </div>
+
+    <button type="button" class="button" id="clear-cache">Clear AniList cache</button>
+  </section>
+
+</div>
+
+<div class="grid grid-2" style="margin-top:16px">
+
+  <!-- ---------- Mappings ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>ID mappings</h2></div>
+
+    <p class="hint" style="margin-bottom:12px">
+      The Kometa Anime-IDs file maps AniList IDs to the MAL and AniDB IDs that
+      Shoko matches on. It downloads automatically.
+    </p>
+
+    <div class="field">
+      <label for="mapping-path">File path {{ locked('mappings.path') }}</label>
+      <input type="text" id="mapping-path" data-path="mappings.path"
+             value="{{ values.mappings.path }}"
+             {% if 'mappings.path' in env_locked %}disabled{% endif %}>
+    </div>
+
+    <div class="check">
+      <input type="checkbox" id="auto-download" data-path="mappings.auto_download"
+             {% if values.mappings.auto_download %}checked{% endif %}>
+      <label for="auto-download">Download and refresh it automatically</label>
+    </div>
+
+    <div class="field">
+      <label for="mapping-age">Refresh after (days)</label>
+      <input type="number" id="mapping-age" data-path="mappings.max_age_days" min="1"
+             value="{{ values.mappings.max_age_days }}">
+    </div>
+
+    <button type="button" class="button" id="refresh-mappings">Download now</button>
+    <div class="test-result" id="test-result-mappings"></div>
+  </section>
+
+  <!-- ---------- Diagnostics ---------- -->
+  <section class="card">
+    <div class="card-head"><h2>Diagnostics</h2></div>
+
+    <p class="hint" style="margin-bottom:12px">
+      Shoko exposes IDs differently across versions. This pulls one real series
+      and reports which IDs were found, so a low match rate is easy to explain.
+    </p>
+
+    <button type="button" class="button" id="run-diagnostics">Check Shoko ID fields</button>
+    <div id="diagnostics-output" style="margin-top:12px"></div>
+
+    <div style="margin-top:18px">
+      <p class="eyebrow">Paths</p>
+      <p class="hint">Config: <code>{{ runtime.config_file }}</code></p>
+      <p class="hint">Database: <code>{{ runtime.database_file }}</code></p>
+      <p class="hint">Results: <code>{{ runtime.results_file }}</code></p>
+    </div>
+  </section>
+
+</div>
+
+<div class="settings-actions">
+  <button type="submit" class="button button-primary" id="save-settings">Save settings</button>
+  <span class="hint">Changes apply immediately - no restart needed.</span>
+</div>
+
+</form>
+
+{% endblock %}

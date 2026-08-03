@@ -1,7 +1,31 @@
 {
-  "ShokoURL": "http://192.168.5.145:8111",
-  "APIKey": "YOUR_SHOKO_API_KEY",
-  "MappingFile": "/config/anime_ids.json",
-  "SonarrURL": "http://192.168.5.145:8989",
-  "SonarrAPIKey": "YOUR_SONARR_API_KEY"
+  "version": 2,
+  "shoko": {
+    "url": "http://192.168.5.145:8111",
+    "api_key": "YOUR_SHOKO_API_KEY"
+  },
+  "sonarr": {
+    "url": "http://192.168.5.145:8989",
+    "api_key": "YOUR_SONARR_API_KEY",
+    "enabled": true
+  },
+  "anilist": {
+    "max_results": 1000,
+    "min_popularity": 50000,
+    "cache_max_age_hours": 24,
+    "formats": ["TV"],
+    "sort": "POPULARITY_DESC"
+  },
+  "mappings": {
+    "path": "/config/anime_ids.json",
+    "auto_download": true,
+    "max_age_days": 7
+  },
+  "schedule": {
+    "cron": "0 4 * * *",
+    "run_on_start": true
+  },
+  "ui": {
+    "tiers": [100, 250, 500, 1000]
+  }
 }
