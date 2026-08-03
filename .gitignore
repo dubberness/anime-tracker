@@ -1,0 +1,19 @@
+# Secrets - never commit real credentials
+config.json
+.env
+
+# Local runtime data (only relevant if testing outside Docker)
+output/
+*.log
+anilist_top_tv_cache.json
+previous_results.json
+anime_ids.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor/OS cruft
+.DS_Store
+.vscode/

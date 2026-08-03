@@ -1,0 +1,12 @@
+.git
+.github
+.gitignore
+.dockerignore
+README.md
+config.json
+config.example.json
+output/
+*.log
+__pycache__/
+*.pyc
+.DS_Store
