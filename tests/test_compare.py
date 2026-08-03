@@ -205,3 +205,132 @@ def test_sonarr_matches_on_tvdb_id():
 def test_sonarr_series_without_a_tvdb_id_is_not_migrated():
     results = compare.compare_sonarr([{"title": "A", "tvdbId": None}], tvdb_ids={"111"})
     assert results[0].migrated is False
+
+
+# ==========================
+# Sonarr status on tracked entries
+# ==========================
+
+def sonarr_series(tvdb_id, files=0, seasons=None):
+    return {
+        "title": f"Series {tvdb_id}",
+        "tvdbId": tvdb_id,
+        "statistics": {"episodeFileCount": files},
+        "seasons": [
+            {"seasonNumber": number, "statistics": {"episodeFileCount": count}}
+            for number, count in (seasons or {}).items()
+        ],
+    }
+
+
+def test_sonarr_index_keys_on_tvdb_id_and_keeps_season_counts():
+    index = compare.build_sonarr_index([
+        sonarr_series(111, files=24, seasons={1: 12, 2: 12}),
+        sonarr_series(None),
+    ])
+
+    assert set(index) == {"111"}
+    assert index["111"]["seasons"] == {1: 12, 2: 12}
+    assert index["111"]["episode_file_count"] == 24
+
+
+def test_sonarr_status_states():
+    index = compare.build_sonarr_index([sonarr_series(111, files=12, seasons={1: 12})])
+
+    assert compare.sonarr_status("111", 1, index) == "owned"
+    assert compare.sonarr_status("222", 1, index) == "missing"
+    assert compare.sonarr_status(None, None, index) == "unmapped"
+    assert compare.sonarr_status("111", 1, index, available=False) == "unknown"
+
+
+def test_a_season_with_no_files_is_wanted_not_owned():
+    """Season 1 being on disk must not mark season 2 as owned."""
+    index = compare.build_sonarr_index([
+        sonarr_series(111, files=12, seasons={1: 12, 2: 0}),
+    ])
+
+    assert compare.sonarr_status("111", 1, index) == "owned"
+    assert compare.sonarr_status("111", 2, index) == "wanted"
+
+
+def test_unknown_season_falls_back_to_the_series_total():
+    index = compare.build_sonarr_index([
+        sonarr_series(111, files=12, seasons={1: 12}),
+    ])
+
+    assert compare.sonarr_status("111", -1, index) == "owned"
+    assert compare.sonarr_status("111", None, index) == "owned"
+
+
+def test_tracked_entries_carry_their_sonarr_status():
+    index = compare.build_sonarr_index([sonarr_series(555, files=12, seasons={1: 12})])
+
+    results = compare.compare_collections(
+        [media(1, 1), media(2, 2)],
+        {
+            1: {"mal_id": "100", "tvdb_id": 555, "tvdb_season": 1},
+            2: {"mal_id": "200", "tvdb_id": 999, "tvdb_season": 1},
+        },
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+        sonarr_index=index, sonarr_available=True,
+    )
+
+    assert results[0].sonarr_status == "owned"
+    assert results[0].tvdb_id == "555"
+    assert results[1].sonarr_status == "missing"
+
+
+def test_sonarr_status_is_unknown_when_sonarr_was_not_consulted():
+    results = compare.compare_collections(
+        [media(1, 1)], {1: {"mal_id": "100", "tvdb_id": 555}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert results[0].sonarr_status == "unknown"
+
+
+# ==========================
+# Season entries
+# ==========================
+
+def test_season_entries_are_ranked_by_list_position():
+    entries = compare.build_season_entries(
+        [media(7, 0), media(8, 0), media(9, 0)],
+        {}, mal_ids=set(), anidb_ids=set(),
+    )
+    assert [e.rank for e in entries] == [1, 2, 3]
+    assert [e.anilist_id for e in entries] == [7, 8, 9]
+
+
+def test_season_entries_keep_unmapped_shows():
+    """Next season's shows are exactly the ones Kometa hasn't mapped yet."""
+    entries = compare.build_season_entries(
+        [media(1, 0, popularity=5)], {}, mal_ids=set(), anidb_ids=set(),
+    )
+    assert len(entries) == 1
+    assert entries[0].mal_id == ""
+    assert entries[0].owned is False
+    assert entries[0].sonarr_status == "unknown"
+
+
+def test_season_entries_ignore_the_popularity_floor():
+    entries = compare.build_season_entries(
+        [media(1, 0, popularity=3)], {1: {"mal_id": "100"}},
+        mal_ids={"100"}, anidb_ids=set(),
+    )
+    assert entries[0].owned is True
+
+
+def test_season_entries_respect_the_limit():
+    entries = compare.build_season_entries(
+        [media(i, 0) for i in range(1, 30)], {},
+        mal_ids=set(), anidb_ids=set(), limit=20,
+    )
+    assert len(entries) == 20
+
+
+def test_season_entries_drop_duplicates():
+    entries = compare.build_season_entries(
+        [media(1, 0), media(1, 0), media(2, 0)], {},
+        mal_ids=set(), anidb_ids=set(),
+    )
+    assert [e.anilist_id for e in entries] == [1, 2]

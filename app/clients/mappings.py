@@ -89,16 +89,23 @@ def load(settings, force_download=False):
         raw = json.load(fh)
 
     lookup = {}
-    for value in raw.values():
+    for anidb_id, value in raw.items():
         if not isinstance(value, dict):
             continue
         anilist_id = value.get("anilist_id")
         if not anilist_id:
             continue
         try:
-            lookup[int(anilist_id)] = value
+            key = int(anilist_id)
         except (TypeError, ValueError):
             continue
+
+        # The AniDB ID is the object key, not a field on the value, so it has
+        # to be folded in - without this every anidb_id lookup comes back None
+        # and matching silently falls back to MAL alone.
+        entry = dict(value)
+        entry.setdefault("anidb_id", str(anidb_id))
+        lookup[key] = entry
 
     log.info("Mappings loaded: %s AniList IDs in %.2fs",
              len(lookup), time.time() - started)

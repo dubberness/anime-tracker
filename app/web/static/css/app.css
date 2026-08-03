@@ -395,6 +395,7 @@ td.title a:hover { color: var(--series-1); }
   color: var(--ink-2);
 }
 .pill-good { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.pill-warn { color: var(--serious); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
 .pill-muted { color: var(--muted); }
 
 /* ==========================

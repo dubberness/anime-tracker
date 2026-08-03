@@ -108,6 +108,22 @@ def _register_pages(app, ctx):
             title="Library",
             data=results,
             stats=results["stats"],
+            comparison=results.get("comparison"),
+            status=ctx.state.snapshot(),
+        )
+
+    @app.route("/seasons")
+    def seasons_page():
+        results = ctx.runner.results
+        if not results:
+            return render_template("empty.html", status=ctx.state.snapshot(),
+                                   title="Seasons")
+
+        return render_template(
+            "seasons.html",
+            title="Seasons",
+            data=results,
+            seasons=results.get("seasons") or [],
             status=ctx.state.snapshot(),
         )
 

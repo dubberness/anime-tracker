@@ -1,6 +1,6 @@
 """Aggregate statistics, tier breakdowns and run-over-run diffing."""
 
-from core.models import Diff
+from core.models import SONARR_OWNED, SONARR_UNMAPPED, Diff
 
 
 def _avg(values):
@@ -83,6 +83,45 @@ def build_genre_breakdown(results, limit=10):
         bucket["completion"] = round(bucket["owned"] / bucket["total"] * 100, 2)
 
     return ranked
+
+
+def build_comparison(results, sonarr_available=False):
+    """Shoko against Sonarr across the tracked list - the point of two columns.
+
+    Entries the mapping has no TVDB ID for are counted on their own rather than
+    folded into "in neither", where they would read as a false negative.
+    Returns None when there is no Sonarr data to compare against.
+    """
+    if not sonarr_available:
+        return None
+
+    both = shoko_only = sonarr_only = neither = unmapped = 0
+
+    for entry in results:
+        if entry.sonarr_status == SONARR_UNMAPPED:
+            unmapped += 1
+            continue
+
+        in_sonarr = entry.sonarr_status == SONARR_OWNED
+
+        if entry.owned and in_sonarr:
+            both += 1
+        elif entry.owned:
+            shoko_only += 1
+        elif in_sonarr:
+            sonarr_only += 1
+        else:
+            neither += 1
+
+    return {
+        "both": both,
+        "shoko_only": shoko_only,
+        "sonarr_only": sonarr_only,
+        "neither": neither,
+        "unmapped": unmapped,
+        "comparable": both + shoko_only + sonarr_only + neither,
+        "in_sonarr": both + sonarr_only,
+    }
 
 
 def build_migration_stats(sonarr_results):

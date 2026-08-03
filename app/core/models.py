@@ -3,10 +3,19 @@
 from dataclasses import asdict, dataclass, field
 from typing import Any, List, Optional
 
+# How a tracked entry stands in Sonarr. Five states rather than a bool because
+# "the mapping has no TVDB ID" and "Sonarr doesn't have it" mean very different
+# things when the whole point is comparing two libraries.
+SONARR_UNKNOWN = "unknown"      # Sonarr is off, or this run couldn't reach it
+SONARR_UNMAPPED = "unmapped"    # no TVDB ID in the mapping file - can't tell
+SONARR_MISSING = "missing"      # TVDB ID known, series not in Sonarr
+SONARR_WANTED = "wanted"        # in Sonarr, but nothing on disk yet
+SONARR_OWNED = "owned"          # in Sonarr with episode files
+
 
 @dataclass
 class Entry:
-    """One tracked AniList series, matched (or not) against Shoko."""
+    """One tracked AniList series, matched (or not) against Shoko and Sonarr."""
 
     rank: int
     title: str
@@ -24,6 +33,9 @@ class Entry:
     format: str = ""
     status: str = ""
     genres: List[str] = field(default_factory=list)
+    tvdb_id: str = ""
+    tvdb_season: Optional[int] = None
+    sonarr_status: str = SONARR_UNKNOWN
 
     def to_dict(self):
         return asdict(self)

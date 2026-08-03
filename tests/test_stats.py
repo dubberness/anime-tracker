@@ -1,10 +1,11 @@
 """Stats, tiers and run-over-run diffing."""
 
 from core import stats as stats_mod
-from core.models import Entry, SonarrEntry
+from core.models import SONARR_UNKNOWN, Entry, SonarrEntry
 
 
-def entry(rank, owned, score=80, year=2015, root=True, genres=None, mal=None):
+def entry(rank, owned, score=80, year=2015, root=True, genres=None, mal=None,
+          sonarr=SONARR_UNKNOWN):
     return Entry(
         rank=rank,
         title=f"Show {rank}",
@@ -20,6 +21,7 @@ def entry(rank, owned, score=80, year=2015, root=True, genres=None, mal=None):
         owned=owned,
         is_franchise_root=root,
         genres=genres or [],
+        sonarr_status=sonarr,
     )
 
 
@@ -135,6 +137,50 @@ def test_migration_stats_with_no_sonarr_data():
     migration = stats_mod.build_migration_stats([])
     assert migration["total"] == 0
     assert migration["completion"] == 0
+
+
+# ==========================
+# Shoko vs Sonarr
+# ==========================
+
+def test_comparison_splits_the_four_quadrants():
+    comparison = stats_mod.build_comparison([
+        entry(1, True, sonarr="owned"),
+        entry(2, True, sonarr="missing"),
+        entry(3, False, sonarr="owned"),
+        entry(4, False, sonarr="missing"),
+    ], sonarr_available=True)
+
+    assert comparison["both"] == 1
+    assert comparison["shoko_only"] == 1
+    assert comparison["sonarr_only"] == 1
+    assert comparison["neither"] == 1
+    assert comparison["comparable"] == 4
+    assert comparison["in_sonarr"] == 2
+
+
+def test_comparison_counts_unmapped_entries_separately():
+    """No TVDB ID is "can't tell", not "not in Sonarr"."""
+    comparison = stats_mod.build_comparison([
+        entry(1, False, sonarr="unmapped"),
+        entry(2, False, sonarr="missing"),
+    ], sonarr_available=True)
+
+    assert comparison["unmapped"] == 1
+    assert comparison["neither"] == 1
+    assert comparison["comparable"] == 1
+
+
+def test_a_series_monitored_but_empty_does_not_count_as_in_sonarr():
+    comparison = stats_mod.build_comparison(
+        [entry(1, False, sonarr="wanted")], sonarr_available=True
+    )
+    assert comparison["sonarr_only"] == 0
+    assert comparison["neither"] == 1
+
+
+def test_no_comparison_without_sonarr():
+    assert stats_mod.build_comparison([entry(1, True)], sonarr_available=False) is None
 
 
 def test_library_totals():
