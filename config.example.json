@@ -1,0 +1,7 @@
+{
+  "ShokoURL": "http://192.168.5.145:8111",
+  "APIKey": "YOUR_SHOKO_API_KEY",
+  "MappingFile": "/config/anime_ids.json",
+  "SonarrURL": "http://192.168.5.145:8989",
+  "SonarrAPIKey": "YOUR_SONARR_API_KEY"
+}
