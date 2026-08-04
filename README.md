@@ -135,7 +135,10 @@ tests/                    pytest suite
   than a misleading "not in Sonarr". Where the mapping names a TVDB season, the
   per-season file count is used, so season 1 being on disk doesn't mark season
   2 as owned.
-- **Sonarr ↔ Shoko** — matched on **TVDB ID**.
+- **Sonarr ↔ Shoko** — matched on **TVDB ID**. Shoko's own TVDB field is
+  cross-checked against the mapping file (keyed by each series' AniDB ID),
+  since Shoko dropped TheTVDB as a metadata source and that field can be
+  stale or simply wrong for a given title.
 - Shoko exposes IDs differently across versions, so both `IDs.*` and the
   `Links` list are checked. If match rates look wrong, use
   **Settings → Diagnostics → Check Shoko ID fields** to see what your instance
@@ -254,3 +257,7 @@ without building the image; the container itself runs 3.12.
 - Fixed in 4.1: AniDB IDs were never loaded from the mapping file, so matching
   had been silently falling back to MAL alone. Expect the Shoko match rate to
   go up on the first run after upgrading.
+- Fixed after 4.2.0: Sonarr ↔ Shoko migration matching now also cross-checks
+  the mapping file for each series' TVDB ID, not just Shoko's own (sometimes
+  stale) field. Expect a few migration entries to flip to "already in Shoko"
+  on the first run after upgrading.
