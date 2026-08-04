@@ -42,21 +42,42 @@ def _as_int(value):
         return None
 
 
-def extract_shoko_ids(shoko_series):
+def _anidb_to_tvdb(mappings):
+    """AniDB ID -> TVDB ID, reversed out of the AniList-keyed mapping file.
+
+    Shoko only ever reports an AniDB ID for a series, never an AniList one, so
+    the mapping has to be flipped to be useful as a Shoko-side lookup.
+    """
+    index = {}
+    for entry in (mappings or {}).values():
+        anidb_id = entry.get("anidb_id")
+        tvdb_id = entry.get("tvdb_id")
+        if anidb_id and tvdb_id:
+            index[str(anidb_id)] = str(tvdb_id)
+    return index
+
+
+def extract_shoko_ids(shoko_series, mappings=None):
     """Pull MAL, AniDB and TVDB IDs out of the Shoko library.
 
     Shoko exposes IDs differently across versions - IDs.AniDB / IDs.TvDB on
     newer builds, a Links list on others. Both paths are checked so this keeps
     working either way.
+
+    Shoko's own TVDB field can't be trusted on its own: Shoko dropped TheTVDB
+    as a metadata source in favour of TMDB, so that field is just a passive
+    AniDB crossref, and AniDB's crossref data itself is wrong for some titles
+    (e.g. Naruto Shippuuden inheriting the original Naruto's TVDB ID). Each
+    series' AniDB ID - which Shoko does get right, since that's its actual
+    source of truth - is cross-checked against the community-maintained
+    mapping file, and any TVDB ID found there is added on top.
     """
     mal_ids, anidb_ids, tvdb_ids = set(), set(), set()
+    anidb_to_tvdb = _anidb_to_tvdb(mappings)
 
     for series in shoko_series:
         ids = series.get("IDs") or {}
-
-        for value in _as_list(ids.get("AniDB")):
-            if value:
-                anidb_ids.add(str(value))
+        series_anidb_ids = {str(v) for v in _as_list(ids.get("AniDB")) if v}
 
         for value in _as_list(ids.get("TvDB")) + _as_list(ids.get("TvDBID")):
             if value:
@@ -77,11 +98,17 @@ def extract_shoko_ids(shoko_series):
             elif name == "anidb":
                 match = ANIDB_URL_RE.search(url)
                 if match:
-                    anidb_ids.add(match.group(1))
+                    series_anidb_ids.add(match.group(1))
             elif name in ("thetvdb", "tvdb"):
                 match = TVDB_URL_RE.search(url)
                 if match:
                     tvdb_ids.add(match.group(1))
+
+        anidb_ids |= series_anidb_ids
+        for anidb_id in series_anidb_ids:
+            mapped_tvdb = anidb_to_tvdb.get(anidb_id)
+            if mapped_tvdb:
+                tvdb_ids.add(mapped_tvdb)
 
     log.info("Shoko IDs - MAL: %s, AniDB: %s, TVDB: %s",
              len(mal_ids), len(anidb_ids), len(tvdb_ids))

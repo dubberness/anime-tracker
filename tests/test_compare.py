@@ -57,6 +57,38 @@ def test_id_extraction_survives_empty_and_missing_shapes():
     assert (mal, anidb, tvdb) == (set(), set(), set())
 
 
+def test_tvdb_is_cross_checked_against_the_mapping_file():
+    """Shoko's own TVDB field can be wrong - e.g. Naruto Shippuuden (AniDB
+    4880) coming back with the original Naruto's TVDB ID instead of its own.
+    The mapping file's TVDB ID for that AniDB ID is added on top rather than
+    trusted in place of Shoko's, so either source finding it is enough.
+    """
+    mappings = {
+        1735: {"anidb_id": "4880", "tvdb_id": 79824, "mal_id": 1735},
+    }
+    mal, anidb, tvdb = compare.extract_shoko_ids(
+        [{"IDs": {"AniDB": 4880, "TvDB": [78857]}}], mappings,
+    )
+    assert anidb == {"4880"}
+    assert tvdb == {"78857", "79824"}
+
+
+def test_tvdb_mapping_lookup_also_covers_the_links_fallback():
+    mappings = {1735: {"anidb_id": "4880", "tvdb_id": 79824}}
+    mal, anidb, tvdb = compare.extract_shoko_ids(
+        [{"Links": [{"Name": "AniDB", "URL": "https://anidb.net/anime/4880"}]}],
+        mappings,
+    )
+    assert tvdb == {"79824"}
+
+
+def test_tvdb_mapping_lookup_is_a_noop_without_a_mapping_file():
+    mal, anidb, tvdb = compare.extract_shoko_ids(
+        [{"IDs": {"AniDB": 4880, "TvDB": [78857]}}],
+    )
+    assert tvdb == {"78857"}
+
+
 # ==========================
 # Episode counting
 # ==========================

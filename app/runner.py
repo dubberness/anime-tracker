@@ -79,21 +79,26 @@ class Runner:
         if not already_claimed and not self.state.try_begin(trigger):
             return False
 
-        run_id = self.storage.start_run()
         started = datetime.now()
         error = None
+        run_id = None
 
+        # run_id itself is created inside the try so a failure to even open the
+        # history DB still hits `finally` below - otherwise the run state is
+        # left stuck at "running" forever, since nothing else clears it.
         try:
+            run_id = self.storage.start_run()
             self._execute(run_id, started)
             return True
         except Exception as exc:  # noqa: BLE001 - a failed run must not kill the process
             error = str(exc)
             log.error("Run failed: %s", exc)
             log.debug("%s", traceback.format_exc())
-            self.storage.finish_run(
-                run_id, "failed", error=error,
-                duration=(datetime.now() - started).total_seconds(),
-            )
+            if run_id is not None:
+                self.storage.finish_run(
+                    run_id, "failed", error=error,
+                    duration=(datetime.now() - started).total_seconds(),
+                )
             return False
         finally:
             self.state.finish(error=error)
@@ -250,7 +255,7 @@ class Runner:
             progress=lambda msg: self.state.set_message(msg)
         )
 
-        mal_ids, anidb_ids, tvdb_ids = compare.extract_shoko_ids(shoko_series)
+        mal_ids, anidb_ids, tvdb_ids = compare.extract_shoko_ids(shoko_series, mapping_lookup)
         shoko_episodes, episodes_suspect = compare.count_shoko_episodes(shoko_series)
 
         self._refresh_tracked(mapping_lookup, anilist)

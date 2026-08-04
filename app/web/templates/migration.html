@@ -60,6 +60,7 @@
           <th scope="col" class="sortable" data-type="text">Status</th>
           <th scope="col" class="sortable" data-type="num">Episodes</th>
           <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+          <th scope="col">Download</th>
         </tr>
       </thead>
       <tbody>
@@ -72,6 +73,11 @@
           <td>{{ row.status }}</td>
           <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
           <td class="num">{{ row.size_gb }}</td>
+          <td>
+            <a class="sub-link"
+               href="https://nyaa.si/?f=0&amp;c=0_0&amp;q={{ row.title | urlencode }}&amp;s=seeders&amp;o=desc"
+               target="_blank" rel="noopener">Search</a>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
