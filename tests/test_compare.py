@@ -114,6 +114,210 @@ def test_empty_library_is_not_suspect():
     assert (total, suspect) == (0, False)
 
 
+def test_per_series_counts_cover_the_dict_shaped_fallback():
+    assert compare.shoko_episode_count({"Sizes": {"Local": {"Episodes": 12}}}) == 12
+    assert compare.shoko_episode_count({"Sizes": {"Local": {"Total": 5}}}) == 5
+    assert compare.shoko_episode_count({"EpisodeCount": 3}) == 3
+    assert compare.shoko_episode_count(
+        {"Sizes": {"Local": {"Episodes": {"Episodes": 7}}}}
+    ) == 7
+    assert compare.shoko_episode_count({"Sizes": {"Local": {"Episodes": "nope"}}}) == 0
+
+
+# ==========================
+# The Shoko side of the migration
+# ==========================
+
+SHOKO_LIBRARY = [
+    {"Name": "Alpha", "IDs": {"AniDB": 1, "TvDB": [100]},
+     "Sizes": {"Local": {"Episodes": 12}}},
+    {"Title": "Beta", "IDs": {"AniDB": 2},
+     "Sizes": {"Local": {"Episodes": 5}}},
+    {"IDs": {"AniDB": 3, "TvDB": [300]}, "Sizes": {"Local": {"Episodes": 1}}},
+]
+
+
+def test_the_index_returns_the_same_sets_as_the_id_extractor():
+    """The refactor's safety net: one walk, two views, no disagreement."""
+    entries, mal, anidb, tvdb = compare.build_shoko_index(SHOKO_LIBRARY)
+    assert (mal, anidb, tvdb) == compare.extract_shoko_ids(SHOKO_LIBRARY)
+    assert len(entries) == len(SHOKO_LIBRARY)
+
+
+def test_shoko_rows_take_a_title_from_either_field():
+    entries, _, _, _ = compare.build_shoko_index(SHOKO_LIBRARY)
+    assert [e.title for e in entries] == ["Alpha", "Beta", "Unknown"]
+
+
+def test_a_shoko_series_with_no_tvdb_id_is_unmapped_not_missing():
+    """Most of a library is movies and OVAs. Calling those "only in Shoko"
+    would bury the handful of rows that actually mean something."""
+    entries, _, _, _ = compare.build_shoko_index(SHOKO_LIBRARY)
+    compare.annotate_shoko_sonarr(entries, {"100": {"episode_file_count": 12}})
+
+    assert entries[1].sonarr_status == "unmapped"
+    assert entries[0].sonarr_status == "owned"
+    assert entries[2].sonarr_status == "missing"
+    assert [e.title for e in compare.shoko_only(entries)] == ["Unknown"]
+
+
+def test_a_shoko_series_matches_on_either_of_its_tvdb_ids():
+    """The mapping-derived ID may be the one Sonarr knows it by, and it can
+    sort after the stale one - so every candidate has to be tried."""
+    mappings = {1735: {"anidb_id": "4880", "tvdb_id": 79824}}
+    entries, _, _, _ = compare.build_shoko_index(
+        [{"Name": "Shippuuden", "IDs": {"AniDB": 4880, "TvDB": [78857]}}], mappings,
+    )
+    compare.annotate_shoko_sonarr(entries, {"79824": {"episode_file_count": 500}})
+
+    assert entries[0].sonarr_status == "owned"
+    assert entries[0].tvdb_id == "79824"
+
+
+def test_shoko_rows_read_as_unknown_when_sonarr_is_unavailable():
+    entries, _, _, _ = compare.build_shoko_index(SHOKO_LIBRARY)
+    compare.annotate_shoko_sonarr(entries, {}, sonarr_available=False)
+
+    assert {e.sonarr_status for e in entries} == {"unknown"}
+    assert compare.shoko_only(entries) == []
+
+
+def test_a_series_in_sonarr_with_no_files_is_wanted_and_worth_listing():
+    entries, _, _, _ = compare.build_shoko_index(SHOKO_LIBRARY)
+    compare.annotate_shoko_sonarr(entries, {"100": {"episode_file_count": 0}})
+
+    assert entries[0].sonarr_status == "wanted"
+    assert entries[0] in compare.shoko_only(entries)
+
+
+def test_episodes_are_summed_per_tvdb_id():
+    """Sonarr is one row per TVDB series; Shoko is roughly one per season."""
+    entries, _, _, _ = compare.build_shoko_index([
+        {"Name": "S1", "IDs": {"AniDB": 1, "TvDB": [100]},
+         "Sizes": {"Local": {"Episodes": 12}}},
+        {"Name": "S2", "IDs": {"AniDB": 2, "TvDB": [100]},
+         "Sizes": {"Local": {"Episodes": 13}}},
+    ])
+    assert compare.shoko_episodes_by_tvdb(entries) == {"100": 25}
+
+
+# ==========================
+# Partial migrations
+# ==========================
+
+def migration_row(tvdb_id, files, total=24):
+    return {
+        "title": f"Series {tvdb_id}",
+        "tvdbId": tvdb_id,
+        "status": "ended",
+        "statistics": {
+            "episodeFileCount": files,
+            "episodeCount": total,
+            "sizeOnDisk": 0,
+        },
+    }
+
+
+def test_a_series_shoko_is_short_on_is_partial():
+    results = compare.compare_sonarr(
+        [migration_row(100, files=24)], {"100"}, {"100": 12},
+    )
+    assert results[0].migrated is True
+    assert results[0].partial is True
+    assert results[0].shoko_episodes == 12
+
+
+def test_a_one_episode_gap_is_within_tolerance():
+    """Shoko generally leaves specials out where Sonarr counts them."""
+    results = compare.compare_sonarr(
+        [migration_row(100, files=13)], {"100"}, {"100": 12},
+    )
+    assert results[0].partial is False
+
+
+def test_a_series_not_in_shoko_at_all_is_not_partial():
+    results = compare.compare_sonarr([migration_row(100, files=24)], set(), {})
+    assert results[0].migrated is False
+    assert results[0].partial is False
+
+
+def test_zero_episodes_on_shokos_side_is_not_partial():
+    """That reads as "not migrated", or as a version whose counts don't parse."""
+    results = compare.compare_sonarr(
+        [migration_row(100, files=24)], {"100"}, {"100": 0},
+    )
+    assert results[0].partial is False
+
+
+def test_compare_sonarr_still_works_without_shoko_counts():
+    results = compare.compare_sonarr([migration_row(100, files=24)], {"100"})
+    assert results[0].migrated is True
+    assert results[0].partial is False
+
+
+# ==========================
+# New seasons of owned shows
+# ==========================
+
+def test_owned_anilist_ids_resolve_through_either_id():
+    mappings = {10: {"mal_id": "1", "anidb_id": "2"},
+                20: {"mal_id": "3", "anidb_id": "4"},
+                30: {"mal_id": "5", "anidb_id": "6"}}
+
+    assert compare.owned_anilist_ids(mappings, {"1"}, set()) == {10}
+    assert compare.owned_anilist_ids(mappings, set(), {"4"}) == {20}
+    assert compare.owned_anilist_ids(mappings, set(), set()) == set()
+
+
+def prequel_edge(node_id, node_format=None):
+    node = {"id": node_id, "type": "ANIME"}
+    if node_format:
+        node["format"] = node_format
+    return {"relationType": "PREQUEL", "node": node}
+
+
+def season_entry(edges, owned_ids=None):
+    item = media(2, 1)
+    item["relations"] = {"edges": edges}
+    return compare.build_season_entries(
+        [item], {}, set(), set(), owned_ids=owned_ids,
+    )[0]
+
+
+def test_a_new_season_of_an_owned_show_is_flagged():
+    assert season_entry([prequel_edge(1, "TV")], owned_ids={1}).sequel_of_owned is True
+
+
+def test_a_sequel_of_something_unowned_is_not_flagged():
+    assert season_entry([prequel_edge(1, "TV")], owned_ids={99}).sequel_of_owned is False
+
+
+def test_a_show_with_no_relations_is_not_flagged():
+    assert season_entry([]).sequel_of_owned is False
+
+
+def test_nothing_is_flagged_without_the_owned_set():
+    """The default path - compare_collections callers that don't pass it."""
+    assert season_entry([prequel_edge(1, "TV")]).sequel_of_owned is False
+
+
+def test_a_special_prequel_does_not_make_it_a_new_season():
+    """A recap special isn't the season before; the sequel just follows it."""
+    assert season_entry([prequel_edge(1, "SPECIAL")], owned_ids={1}).sequel_of_owned is False
+
+
+def test_a_prequel_with_no_format_still_counts():
+    """Cached AniList responses predate the format field being requested."""
+    assert season_entry([prequel_edge(1)], owned_ids={1}).sequel_of_owned is True
+
+
+def test_a_special_prequel_still_means_it_is_not_a_franchise_root():
+    """Root-ness asks whether anything came before, of any kind."""
+    entry = season_entry([prequel_edge(1, "SPECIAL")])
+    assert entry.is_franchise_root is False
+    assert entry.sequel_of_owned is False
+
+
 # ==========================
 # Ownership
 # ==========================

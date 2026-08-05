@@ -252,6 +252,13 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 
+/* Explains what a table means before you read it - the migration page has
+   several that need a caveat to be read correctly. */
+.note {
+  color: var(--muted); font-size: 12px; line-height: 1.55;
+  margin: -4px 0 14px; max-width: 74ch;
+}
+
 /* ==========================
    Figures - hero & stat tiles
    ========================== */

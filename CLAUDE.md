@@ -60,13 +60,29 @@ tests/             pytest suite, mirrors app/ modules
 ```
 
 **Data flow of a run** (`Runner._execute` in `app/runner.py`): load ID
-mappings → fetch AniList list → fetch Shoko library → extract MAL/AniDB/TVDB
-IDs → refresh/prune autobrr-tracked rows → fetch Sonarr (optional) → compare
-everything (`core/compare.py`) → build stats/tiers/decades/genres/diff
-(`core/stats.py`) → build seasonal charts (`core/seasons.py`) → auto-seed
-autobrr tracking → persist a single JSON payload via `storage.py` and update
-run history. `RunState` prevents two runs happening concurrently
-(`try_begin`/`finish`).
+mappings → fetch AniList list → fetch Shoko library → `build_shoko_index`
+(per-series rows *and* the MAL/AniDB/TVDB sets, one walk) → refresh/prune
+autobrr-tracked rows → fetch Sonarr (optional) → `annotate_shoko_sonarr` fills
+the Shoko rows' Sonarr status → compare everything (`core/compare.py`) → build
+stats/tiers/decades/genres/diff (`core/stats.py`) → build seasonal charts
+(`core/seasons.py`) → auto-seed autobrr tracking → persist a single JSON
+payload via `storage.py` and update run history. `RunState` prevents two runs
+happening concurrently (`try_begin`/`finish`).
+
+Shoko is read *before* Sonarr and the phase order is load-bearing (`state.PHASES`
+and the progress UI follow it), which is why the Shoko rows learn their Sonarr
+status in a second pass rather than being built with it. Don't reorder the
+phases to avoid that pass.
+
+`extract_shoko_ids` and `count_shoko_episodes` are thin wrappers over
+`build_shoko_index` / `shoko_episode_count`. The per-version ID rules live in
+`_shoko_series_ids` alone — that logic is subtle (see its docstring) and must
+not be forked. The wrappers exist for the diagnostics endpoint and to keep the
+existing tests as a regression guard.
+
+Only the Shoko rows the migration page lists (`compare.shoko_only`) go into the
+payload. Persisting the whole library would add hundreds of KB to every
+`/api/results` fetch to say "in both", which the Sonarr side already covers.
 
 **Config precedence** (low to high): dataclass defaults → `config.json` →
 environment variables. Env-overridden settings are reported as locked so the
@@ -85,6 +101,18 @@ half-finished config is a normal "needs setup" state, not a startup failure
 - Shoko exposes IDs inconsistently across versions — both `IDs.*` and the
   `Links` list are checked (`Settings → Diagnostics → Check Shoko ID fields`
   surfaces what a given instance actually returns).
+- One Shoko series can hold **two** TVDB IDs (its own, possibly stale, plus the
+  mapping-derived one). Match against all of them and record whichever hit —
+  picking the first would report migrated series as Shoko-only.
+- A Shoko series with no TVDB ID is `unmapped`, not `missing`. Most of a library
+  is movies and OVAs; collapsing that distinction into a bool floods the
+  "only in Shoko" view with false positives.
+- `sequel_of_owned` reads `PREQUEL` edges (AniList IDs) and resolves them
+  through the AniList-ID-keyed mapping into the Shoko sets, via
+  `owned_anilist_ids`. It filters prequels to `SEASON_FORMATS`; a node with no
+  `format` is kept, since a cached AniList response predates that field being
+  requested. `is_franchise_root` deliberately stays **unfiltered** — the two
+  read the same edges and mean different things.
 
 **Graceful degradation is a deliberate, repeated pattern** — preserve it
 when touching these paths:
@@ -105,6 +133,17 @@ unauthenticated by design so autobrr can poll it) of currently-airing shows
 Shoko is missing. Auto-tracked entries are re-pruned once Shoko has them;
 manually-untracked entries are remembered so auto-seed doesn't re-add them
 (`core/autobrr.py`, `storage.py` tracked-rows table).
+
+`auto_seed_candidates` takes the **whole seasons list**, not a block, and
+`seed_blocks` picks the current and upcoming ones. Both callers
+(`Runner._auto_seed_tracked` and `server._auto_seed_ids`) must go through it:
+`_auto_seed_ids` is what decides whether untracking also records an exclusion,
+so if the two ever disagreed about which shows are auto-picks, the next run
+would silently re-add something the user removed. `auto_seed_limit` is the top-N
+**per block**, not shared: each block contributes its top `limit`, then any
+`sequel_of_owned` entry ranked *below* that cutoff is added as well. A sequel
+inside the cutoff is just one of the N and consumes a slot — there is no
+reordering. A limit of 0 means "track nothing at all", sequels included.
 
 ## Conventions
 

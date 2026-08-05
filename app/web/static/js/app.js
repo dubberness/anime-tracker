@@ -93,6 +93,13 @@
     </td>`;
   }
 
+  /* Only the states worth interrupting for. FINISHED is the overwhelming
+     majority of any list, so a pill for it would be noise on every row. */
+  const STATUS_PILLS = {
+    RELEASING:        '<span class="sub-link" title="Currently airing">&middot; airing</span>',
+    NOT_YET_RELEASED: '<span class="sub-link" title="Announced, not airing yet">&middot; upcoming</span>'
+  };
+
   /* One row shape shared by the library and seasons tables - both are the same
      "an AniList entry, and where it lives" list. */
   function entryRow(entry, withSonarr, withAutobrr) {
@@ -115,6 +122,10 @@
             ${mal}
             <a class="sub-link" href="https://nyaa.si/?f=0&c=0_0&q=${encodeURIComponent(entry.title)}&s=seeders&o=desc" target="_blank" rel="noopener">Search</a>
             ${entry.is_franchise_root ? '<span class="sub-link">&middot; root</span>' : ""}
+            ${STATUS_PILLS[entry.status || ""] || ""}
+            ${entry.sequel_of_owned
+              ? '<span class="pill pill-good" title="You already have an earlier season of this in Shoko">New season</span>'
+              : ""}
           </div>
         </td>
         <td class="num">${entry.score || "-"}</td>
@@ -353,7 +364,7 @@
         tip.removeAttribute("hidden");
         tip.innerHTML =
           `<div class="tip-label">${escapeHtml(point.label)}</div>` +
-          `<div class="tip-value">${point.value.toFixed(1)}% owned</div>` +
+          `<div class="tip-value">${point.value.toFixed(1)}${host.dataset.unit || "% owned"}</div>` +
           (point.detail ? `<div class="tip-label">${escapeHtml(point.detail)}</div>` : "");
         tip.style.left = (px * scale) + "px";
         tip.style.top = ((py * scale) - 10) + "px";
@@ -425,6 +436,41 @@
       rows.forEach(row => tbody.appendChild(row));
       $$("th", table.tHead).forEach(th => th.removeAttribute("data-dir"));
       header.setAttribute("data-dir", asc ? "asc" : "desc");
+    }
+  };
+
+  /* Search over rows that are already in the DOM.
+   *
+   * Separate from Library's engine on purpose: that one renders rows from
+   * JSON it fetches and owns paging and filter buttons with it, none of which
+   * applies to a server-rendered table. Hiding <tr>s composes with
+   * DataTable.sort for free, since sorting only reorders them. */
+  const TableFilter = {
+    init(root) {
+      const input = $("[data-filter-input]", root);
+      const table = $("table", root);
+      if (!input || !table || !table.tBodies.length) return;
+
+      const count = $("[data-filter-count]", root);
+      const rows = Array.from(table.tBodies[0].rows);
+
+      const apply = () => {
+        const term = input.value.trim().toLowerCase();
+        let shown = 0;
+
+        rows.forEach(row => {
+          const hit = !term || row.innerText.toLowerCase().includes(term);
+          row.hidden = !hit;
+          if (hit) shown++;
+        });
+
+        if (count) {
+          count.textContent = term ? `${shown} of ${rows.length}` : "";
+        }
+      };
+
+      input.addEventListener("input", apply);
+      apply();
     }
   };
 
@@ -891,6 +937,7 @@
     Seasons.init();
 
     $$("[data-table]").forEach(el => DataTable.init(el));
+    $$("[data-filterable]").forEach(el => TableFilter.init(el));
 
     const menu = $("#menu-toggle");
     if (menu) {

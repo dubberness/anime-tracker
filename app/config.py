@@ -115,7 +115,7 @@ class ScheduleSettings:
 class UISettings:
     tiers: List[int] = field(default_factory=lambda: [100, 250, 500, 1000])
     history_points: int = 60
-    season_limit: int = 20
+    season_limit: int = 30
 
 
 @dataclass

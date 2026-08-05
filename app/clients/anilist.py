@@ -25,7 +25,7 @@ fragment trackedMedia on Media {
   relations {
     edges {
       relationType(version: 2)
-      node { id type }
+      node { id type format }
     }
   }
 }

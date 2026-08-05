@@ -59,12 +59,16 @@
   </p>
 
   <p class="hint">
-    The current season's top {{ settings.autobrr.auto_seed_limit }} that Shoko is missing are
-    tracked for autobrr automatically; track anything else by hand. Tracked
-    shows drop off once Shoko has them, and untracking an automatic pick keeps
-    it off. <strong>{{ tracked_count }}</strong> tracked right now &mdash; see
-    the <a href="{{ url_for('settings_page') }}">settings page</a> for the list
-    URL to give autobrr.
+    The top {{ settings.autobrr.auto_seed_limit }} shows Shoko is missing are tracked for
+    autobrr automatically, counted separately for this season and the next.
+    Anything marked <span class="pill pill-good">New season</span> is tracked even
+    when it ranks below that cutoff &mdash; the next season of a show with a small
+    audience rarely charts, and that's the one you'd want most. Track anything
+    else by hand. Tracked shows drop off once Shoko has them, and untracking an
+    automatic pick keeps it off.
+    <strong>{{ tracked_count }}</strong> tracked right now &mdash; see the
+    <a href="{{ url_for('settings_page') }}">settings page</a> for the list URL to
+    give autobrr.
   </p>
 </section>
 

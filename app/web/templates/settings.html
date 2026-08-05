@@ -129,12 +129,15 @@
     </div>
 
     <div class="field">
-      <label for="autobrr-seed">Auto-track the season's top</label>
+      <label for="autobrr-seed">Auto-track each season's top</label>
       <input type="number" id="autobrr-seed" data-path="autobrr.auto_seed_limit"
              min="1" max="50" value="{{ values.autobrr.auto_seed_limit }}">
       <p class="hint">
-        Each run tracks this many of the current season's most popular shows
-        that Shoko is missing. Anything you untrack by hand stays untracked.
+        Each run tracks this many of the most popular shows Shoko is missing,
+        counted separately for the current season and the next - so 10 here means
+        up to 20. A new season of something you already have is tracked even when
+        it ranks below the cutoff, since those rarely chart. Anything you untrack
+        by hand stays untracked.
       </p>
     </div>
 

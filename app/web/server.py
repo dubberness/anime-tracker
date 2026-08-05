@@ -150,9 +150,13 @@ def _register_pages(app, ctx):
             "migration.html",
             title="Migration",
             data=results,
-            migration=results["migration"],
-            totals=results["totals"],
+            migration=results.get("migration", {}),
+            totals=results.get("totals", {}),
             sonarr=results.get("sonarr", []),
+            shoko=results.get("shoko", []),
+            trend=_migration_trend_points(
+                ctx.storage.history(ctx.config.settings.ui.history_points)
+            ),
             status=ctx.state.snapshot(),
         )
 
@@ -198,15 +202,48 @@ def _trend_points(history):
     return points
 
 
+def _migration_trend_points(history):
+    """Shape run history for the migration-over-time chart.
+
+    Runs where Sonarr was unreachable still wrote a history row, and it
+    recorded zero series - see Storage.finish_run. Plotting those would show
+    the migration collapsing to 0% and recovering, so they are skipped rather
+    than drawn as real data points.
+    """
+    points = []
+
+    for row in history:
+        total = row.get("sonarr_shows") or 0
+        if not total:
+            continue
+
+        started = row.get("started_at") or ""
+        try:
+            label = datetime.fromisoformat(started).strftime("%d %b %H:%M")
+        except (ValueError, TypeError):
+            label = started
+
+        migrated = row.get("sonarr_migrated") or 0
+        points.append({
+            "label": label,
+            "value": round(migrated / total * 100, 2),
+            "detail": f"{migrated} of {total} in Shoko",
+        })
+
+    return points
+
+
 def _auto_seed_ids(ctx):
-    """AniList IDs the next run would auto-track, from the last run's data."""
+    """AniList IDs the next run would auto-track, from the last run's data.
+
+    Must stay in step with Runner._auto_seed_tracked - this is what decides
+    whether untracking a show also records an exclusion, so if the two ever
+    disagreed the next run would quietly re-add it.
+    """
     results = ctx.runner.results or {}
-    current = next(
-        (b for b in results.get("seasons") or [] if b.get("is_current")), None
-    )
 
     candidates = autobrr_mod.auto_seed_candidates(
-        current,
+        results.get("seasons") or [],
         ctx.storage.autobrr_excluded_ids(),
         ctx.config.settings.autobrr.auto_seed_limit,
     )
