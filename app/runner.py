@@ -105,7 +105,8 @@ class Runner:
             self.storage.prune()
 
     def _build_seasons(self, client, settings, mappings, mal_ids, anidb_ids,
-                       sonarr_index, sonarr_available, previous_seasons):
+                       sonarr_index, sonarr_available, previous_seasons,
+                       owned_ids=None):
         """Ranked charts for the current season and the one either side.
 
         A failure here keeps the previous run's charts rather than blanking the
@@ -115,6 +116,7 @@ class Runner:
         limit = settings.ui.season_limit
         today = date.today()
         current = (season_mod.season_of(today), today.year)
+        upcoming = season_mod.shift(current[0], current[1], 1)
         blocks = []
 
         for index, (season, year) in enumerate(season_mod.window(today)):
@@ -133,11 +135,13 @@ class Runner:
                 "year": year,
                 "label": season_mod.label(season, year),
                 "is_current": (season, year) == current,
+                "is_upcoming": (season, year) == upcoming,
                 "sorts": {
                     key: [
                         entry.to_dict() for entry in compare.build_season_entries(
                             media, mappings, mal_ids, anidb_ids,
                             sonarr_index, sonarr_available, limit,
+                            owned_ids,
                         )
                     ]
                     for key, media in ranked.items()
@@ -201,13 +205,17 @@ class Runner:
         return removed
 
     def _auto_seed_tracked(self, seasons, limit):
-        """Track the current season's most popular shows Shoko is missing."""
-        current = next((b for b in seasons if b.get("is_current")), None)
-        if current is None:
-            return 0
+        """Track what this season and the next are missing from Shoko.
 
+        Shows seeded from the upcoming season usually have no MAL or AniDB ID
+        yet - they are exactly the ones the mapping file hasn't caught up with
+        - so pruning can't recognise them as owned even once Shoko has them.
+        _refresh_tracked backfills those IDs on later runs, at which point
+        pruning starts working; until then the row can still be untracked by
+        hand.
+        """
         candidates = autobrr_mod.auto_seed_candidates(
-            current, self.storage.autobrr_excluded_ids(), limit
+            seasons, self.storage.autobrr_excluded_ids(), limit
         )
         already = self.storage.autobrr_tracked_ids()
         added = 0
@@ -255,7 +263,9 @@ class Runner:
             progress=lambda msg: self.state.set_message(msg)
         )
 
-        mal_ids, anidb_ids, tvdb_ids = compare.extract_shoko_ids(shoko_series, mapping_lookup)
+        shoko_entries, mal_ids, anidb_ids, tvdb_ids = compare.build_shoko_index(
+            shoko_series, mapping_lookup
+        )
         shoko_episodes, episodes_suspect = compare.count_shoko_episodes(shoko_series)
 
         self._refresh_tracked(mapping_lookup, anilist)
@@ -276,7 +286,10 @@ class Runner:
                 sonarr_client = SonarrClient(settings.sonarr, network)
                 sonarr_series = sonarr_client.fetch_series()
                 sonarr_index = compare.build_sonarr_index(sonarr_series)
-                sonarr_results = compare.compare_sonarr(sonarr_series, tvdb_ids)
+                sonarr_results = compare.compare_sonarr(
+                    sonarr_series, tvdb_ids,
+                    compare.shoko_episodes_by_tvdb(shoko_entries),
+                )
             except Exception as exc:  # noqa: BLE001 - Sonarr is optional
                 sonarr_error = str(exc)
                 log.error("Sonarr fetch failed, continuing without it: %s", exc)
@@ -287,11 +300,21 @@ class Runner:
         # "missing", or a dead Sonarr looks like an empty one.
         sonarr_available = sonarr_enabled and sonarr_error is None
 
+        # Shoko was read before Sonarr, so its rows only learn where they stand
+        # now. Cheap second pass rather than reordering the phases, which the
+        # progress UI is keyed to.
+        compare.annotate_shoko_sonarr(shoko_entries, sonarr_index, sonarr_available)
+
         # ---- compare ----
         self.state.set_phase("compare", "Matching against your library")
+        # AniList relations are AniList IDs; Shoko only knows MAL and AniDB
+        # ones. Resolving the library into AniList IDs once here is what lets
+        # "the prequel of this is something I own" be answered at all.
+        owned_ids = compare.owned_anilist_ids(mapping_lookup, mal_ids, anidb_ids)
+
         results = compare.compare_collections(
             anilist, mapping_lookup, mal_ids, anidb_ids, settings.anilist,
-            sonarr_index, sonarr_available,
+            sonarr_index, sonarr_available, owned_ids,
         )
 
         stats = stats_mod.build_stats(results)
@@ -303,7 +326,7 @@ class Runner:
         previous = self.storage.load_results() or {}
         diff = stats_mod.build_diff(results, previous.get("entries"))
 
-        migration = stats_mod.build_migration_stats(sonarr_results)
+        migration = stats_mod.build_migration_stats(sonarr_results, shoko_entries)
         totals = stats_mod.build_library_totals(
             shoko_series, sonarr_series, shoko_episodes, episodes_suspect
         )
@@ -312,7 +335,7 @@ class Runner:
         self.state.set_phase("seasons", "Fetching the seasonal charts")
         seasons = self._build_seasons(
             anilist_client, settings, mapping_lookup, mal_ids, anidb_ids,
-            sonarr_index, sonarr_available, previous.get("seasons"),
+            sonarr_index, sonarr_available, previous.get("seasons"), owned_ids,
         )
 
         # ---- autobrr ----
@@ -337,6 +360,10 @@ class Runner:
             "duration_seconds": round(duration, 1),
             "entries": [entry.to_dict() for entry in results],
             "sonarr": [entry.to_dict() for entry in sonarr_results],
+            # Only the rows the page actually lists. Persisting the whole Shoko
+            # library would add hundreds of KB to every /api/results fetch to
+            # say "in both", which the Sonarr side already covers.
+            "shoko": [entry.to_dict() for entry in compare.shoko_only(shoko_entries)],
             "stats": stats,
             "tiers": tiers,
             "decades": decades,

@@ -29,30 +29,75 @@ def is_now_owned(row, mal_ids, anidb_ids):
     )
 
 
-def auto_seed_candidates(season_block, excluded_ids=(), limit=10):
-    """The current season's most popular shows that Shoko is missing.
+def seed_blocks(seasons):
+    """The season blocks worth seeding from: the current one, then the next.
 
-    Ranked by popularity rather than the page's active sort, so what gets
-    tracked doesn't depend on which toggle happened to be clicked last.
+    The upcoming season is included so a sequel is on autobrr's list before it
+    starts airing rather than after the first episode has already gone by.
+
+    Both callers - the run and the settings page's preview of what the next run
+    would add - go through here. If they picked blocks separately they could
+    drift, and an untracked show would come back on the next run because one
+    side didn't consider it auto-seeded.
+    """
+    blocks = [b for b in (seasons or []) if b.get("is_current")]
+    blocks += [b for b in (seasons or []) if b.get("is_upcoming")]
+    return blocks
+
+
+def auto_seed_candidates(seasons, excluded_ids=(), limit=10):
+    """What autobrr should be told to grab, across this season and the next.
+
+    Per season, in order: the top `limit` most popular that Shoko is missing,
+    then any sequel of something Shoko already has that didn't make the cut.
+
+    A sequel inside the top `limit` is simply one of them and uses a slot like
+    anything else - no reordering. The second pass only rescues the ones ranked
+    too low to be picked up, which is exactly where the next season of a show
+    with a small audience tends to sit, and is the case popularity alone would
+    always miss.
+
+    The limit is counted per season rather than shared, so the current season
+    can't use up the upcoming one's slots.
+
+    Ranked off the popularity list rather than the page's active sort, so what
+    gets tracked doesn't depend on which toggle happened to be clicked last.
     Anything explicitly untracked stays out, otherwise the next run would
     silently undo the decision.
     """
-    if not season_block or limit <= 0:
+    # Zero is the off switch, and it turns the whole thing off - rescuing
+    # sequels anyway would make "0" mean "some".
+    if limit <= 0:
         return []
 
     excluded = {int(value) for value in excluded_ids}
-    entries = (season_block.get("sorts") or {}).get("popularity") or []
+
+    def eligible(block):
+        entries = (block.get("sorts") or {}).get("popularity") or []
+        return [
+            entry for entry in entries
+            if not entry.get("owned") and entry.get("anilist_id") not in excluded
+        ]
 
     candidates = []
-    for entry in entries:
-        if entry.get("owned"):
-            continue
-        if entry.get("anilist_id") in excluded:
-            continue
+    seen = set()
 
+    def take(entry):
+        anilist_id = entry.get("anilist_id")
+        if anilist_id in seen:
+            return
+        seen.add(anilist_id)
         candidates.append(entry)
-        if len(candidates) >= limit:
-            break
+
+    for block in seed_blocks(seasons):
+        entries = eligible(block)
+
+        for entry in entries[:limit]:
+            take(entry)
+
+        for entry in entries[limit:]:
+            if entry.get("sequel_of_owned"):
+                take(entry)
 
     return candidates
 

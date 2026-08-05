@@ -15,13 +15,15 @@ settings UI.
   and its Sonarr status, so "in Shoko only", "in Sonarr only" and "in neither"
   are one click apart.
 - **Seasonal charts** — the top shows of this season and the one either side,
-  with the same Shoko/Sonarr status on each.
+  with the same Shoko/Sonarr status on each, and a **New season** badge on
+  anything whose earlier season is already in Shoko.
 - **Autobrr hand-off** — the currently-airing shows Shoko is missing, published
-  as a title list autobrr can grab from.
+  as a title list autobrr can grab from, with new seasons of what you already
+  have taking priority.
 - **Recommendations** — the highest-value things you're missing, filtered to
   franchise roots so sequels don't clutter the list.
-- **Migration tracking** — which Sonarr series are already in Shoko, matched on
-  TVDB ID, and how much is left to move.
+- **Migration tracking** — the whole Sonarr ↔ Shoko picture: what's left to
+  move, what's in both, what only Shoko has, and what moved but came up short.
 - **Trend history** — completion over time, so progress is visible run to run.
 
 Everything is configured from the web UI. Nothing needs to be edited by hand.
@@ -74,7 +76,7 @@ All settings live in `/config/config.json` and are editable from the
 | Shoko URL / API key | — | Required |
 | Sonarr URL / API key | — | Optional; migration section hides without it |
 | Autobrr URL / API key / list ID | — | Optional; only for pushing an instant list refresh |
-| Auto-track the season's top | `10` | How many airing shows a run tracks by itself |
+| Auto-track each season's top | `10` | Counted separately for this season and the next; new seasons of what you own are tracked even below the cutoff |
 | Formats | `TV` | TV, Movie, OVA, ONA, Special… |
 | Ranked by | Popularity | Popularity, Score, Trending, Favourites |
 | How many | `1000` | How far down the list to track |
@@ -145,6 +147,10 @@ tests/                    pytest suite
   actually returns.
 - **Franchise root** = an entry with no `PREQUEL` relation. One-hop check, so a
   franchise with gaps could slip through.
+- **New season of something you own** = an entry whose `PREQUEL` resolves,
+  through the mapping file, to a series Shoko already has. Also one hop, so
+  owning season 1 but not season 2 won't flag season 3. Prequels that are
+  specials or recaps are ignored, since those aren't the season before.
 - **Recommendation score** = `averageScore × 0.8 + log10(popularity) × 10`.
 
 ### Sonarr status
@@ -156,6 +162,32 @@ tests/                    pytest suite
 | Not in Sonarr | The TVDB ID is known and Sonarr doesn't have it |
 | No TVDB ID | The mapping file has no TVDB ID — Sonarr can't be checked |
 | — | Sonarr is switched off, or the last run couldn't reach it |
+
+## Migration
+
+The **Migration** page shows both sides of the Sonarr → Shoko move, because
+Sonarr's view alone can't say where a series came from.
+
+| Section | What it means |
+|---|---|
+| **Still only in Sonarr** | The work list — Sonarr has files, Shoko doesn't |
+| **Moved, but short** | In both, but Shoko holds fewer episodes than Sonarr — usually a half-finished move |
+| **Only in Shoko** | Shoko has the only copies. *Not in Sonarr* = Sonarr never had the series; *Monitored* = Sonarr still tracks it with nothing on disk, so the entry is a leftover |
+| **Already in both** | Matched on TVDB ID. Goes on the series existing in Sonarr, not on what it holds, so *Monitored* rows appear here too |
+
+Two caveats worth knowing:
+
+- **Episode counts aren't strictly comparable.** Shoko's local count generally
+  leaves specials out where Sonarr's includes season 0 when monitored, so a gap
+  of one or two usually means nothing. Both raw numbers are shown rather than a
+  verdict, and a one-episode gap is treated as even.
+- **Series with no TVDB ID can't be placed.** Most movies and OVAs, plus
+  anything the mapping file hasn't caught up with, have no TVDB ID at all —
+  they're counted separately rather than listed as Shoko-only, which would
+  otherwise bury the rows that mean something.
+
+A run where Sonarr couldn't be reached records zeros in the history table, and
+the progress chart skips those rather than drawing a drop to 0%.
 
 ## Seasons
 
@@ -198,10 +230,21 @@ tell that filter *which shows to match*, using autobrr's built-in
 
 | | |
 |---|---|
-| **Automatic** | Each run tracks the current season's top *N* by popularity (default 10) that Shoko doesn't have |
-| **Manual** | **Track** on any row of the Seasons page — including previous/next season, or past the automatic cutoff |
+| **Automatic** | Each run tracks the top *N* by popularity (default 10) that Shoko doesn't have **from each of** the current season and the next — so the default is up to 20 — plus any new season of something you already own that ranked below the cutoff |
+| **Manual** | **Track** on any row of the Seasons page — including the previous season, or past the automatic cutoff |
 | **Removed** | Automatically, once Shoko has the show — there's nothing left to grab |
 | **Untracked by hand** | Stays off. Untracking one of the automatic picks records the choice so the next run doesn't re-add it; the freed slot goes to the next-ranked show |
+
+Seeding from the upcoming season means a sequel is on the list before it starts
+airing rather than after the first episode has gone by. Two consequences worth
+knowing: a not-yet-released title sits on the list for weeks, so autobrr will
+match anything bearing that name (a pre-air leak, a promo, an unrelated film in
+the same franchise) — that's your filter's quality rules to handle, since this
+app deliberately doesn't own them. And next season's shows are exactly the ones
+the mapping file hasn't caught up with, so they have no MAL or AniDB ID yet and
+automatic removal can't recognise them as owned until it does; a later run
+backfills the IDs and removal starts working. Untracking by hand works
+throughout.
 
 Each show contributes its English **and** romaji title where they differ, since
 release groups use one or the other.
@@ -261,3 +304,21 @@ without building the image; the container itself runs 3.12.
   the mapping file for each series' TVDB ID, not just Shoko's own (sometimes
   stale) field. Expect a few migration entries to flip to "already in Shoko"
   on the first run after upgrading.
+- Fixed after 4.2.0: a configured-but-unreachable Sonarr made the Migration
+  page render a confident "0 of 0 — 0%". It now says so and holds the figures
+  instead, matching how the library page already behaved.
+- New after 4.2.0: the Migration page gained the Shoko side of the comparison
+  ("only in Shoko", and moves that came up short on episodes). The headline
+  percentage and the run history are unchanged — the new sections are additive,
+  so nothing you were tracking moves.
+- New after 4.2.0: autobrr seeding now also draws on the upcoming season, and
+  the auto-track count applies **per season** rather than in total — so the
+  default of 10 now tracks up to 20 by popularity where it previously tracked
+  10, plus any new season of something you own that ranked below the cutoff.
+  Expect the list to grow on the first run after upgrading; drop
+  the count on the settings page if that's more than you want, and untracking
+  any individual pick keeps it off.
+- The `season limit` default rose from 20 to 30, but **an existing install
+  keeps whatever is already in its `config.json`** — defaults only apply to
+  settings that aren't present. Change it on the settings page if you want the
+  wider charts.

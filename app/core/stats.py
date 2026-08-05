@@ -1,5 +1,6 @@
 """Aggregate statistics, tier breakdowns and run-over-run diffing."""
 
+from core.compare import shoko_only
 from core.models import SONARR_OWNED, SONARR_UNMAPPED, Diff
 
 
@@ -124,19 +125,43 @@ def build_comparison(results, sonarr_available=False):
     }
 
 
-def build_migration_stats(sonarr_results):
+def build_migration_stats(sonarr_results, shoko_entries=None):
+    """Both sides of the migration.
+
+    The first six keys are the original Sonarr-side view and are written to the
+    run history, so they keep their exact names and meanings. The Shoko-side
+    counts are additive and absent when no Shoko rows are passed.
+    """
     migrated = [r for r in sonarr_results if r.migrated]
     remaining = [r for r in sonarr_results if not r.migrated]
+    partial = [r for r in sonarr_results if r.partial]
     total = len(sonarr_results)
 
-    return {
+    stats = {
         "total": total,
         "migrated": len(migrated),
         "remaining": len(remaining),
         "completion": round(len(migrated) / total * 100, 2) if total else 0,
         "remaining_size_gb": round(sum(r.size_gb for r in remaining), 2),
         "migrated_size_gb": round(sum(r.size_gb for r in migrated), 2),
+        "partial": len(partial),
+        "partial_missing_episodes": sum(
+            max(r.episode_file_count - r.shoko_episodes, 0) for r in partial
+        ),
     }
+
+    if shoko_entries is not None:
+        only = shoko_only(shoko_entries)
+        stats.update({
+            "shoko_total": len(shoko_entries),
+            "shoko_only": len(only),
+            "shoko_only_episodes": sum(e.episodes for e in only),
+            "shoko_unmapped": sum(
+                1 for e in shoko_entries if e.sonarr_status == SONARR_UNMAPPED
+            ),
+        })
+
+    return stats
 
 
 def build_library_totals(shoko_series, sonarr_series, shoko_episodes=0,

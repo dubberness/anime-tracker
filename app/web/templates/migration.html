@@ -13,14 +13,31 @@
 </div>
 {% else %}
 
+{% if data.sonarr_error %}
+<div class="banner banner-warning">
+  <span class="banner-icon" aria-hidden="true">&#9888;</span>
+  <div>
+    <strong>Sonarr couldn't be reached on the last run.</strong>
+    Nothing has been assumed about what moved, so the figures below stand as
+    they were rather than reading as an empty Sonarr.
+    <code>{{ data.sonarr_error }}</code>
+  </div>
+</div>
+{% endif %}
+
 <section class="card section">
   <div class="hero">
     <div class="hero-figure">
       <p class="eyebrow">Sonarr &rarr; Shoko</p>
+      {% if data.sonarr_error %}
+      <span class="hero-number">&mdash;</span>
+      <span class="hero-label">Waiting on Sonarr</span>
+      {% else %}
       <span class="hero-number">{{ migration.completion }}%</span>
       <span class="hero-label">
         {{ migration.migrated }} of {{ migration.total }} Sonarr series are already in Shoko
       </span>
+      {% endif %}
     </div>
 
     <div class="hero-meta">
@@ -44,14 +61,31 @@
   </div>
 </section>
 
+{% if trend %}
 <section class="card section">
+  <div class="card-head">
+    <h2>Migration over time</h2>
+    <span class="sub">last {{ trend|length }} run{{ '' if trend|length == 1 else 's' }}</span>
+  </div>
+  <div class="chart" id="trend-chart" data-unit="% in Shoko"></div>
+  <script type="application/json" id="trend-data">{{ trend|tojson }}</script>
+</section>
+{% endif %}
+
+{% set remaining = sonarr | rejectattr('migrated') | list %}
+<section class="card section" data-filterable>
   <div class="card-head">
     <h2>Still only in Sonarr</h2>
     <span class="sub">{{ migration.remaining }} series &middot; {{ migration.remaining_size_gb }} GB</span>
   </div>
 
-  {% set remaining = sonarr | rejectattr('migrated') | list %}
   {% if remaining %}
+  <div class="toolbar">
+    <input class="search" type="text" data-filter-input
+           placeholder="Search titles..." autocomplete="off">
+    <span class="sub" data-filter-count></span>
+  </div>
+
   <div class="table-wrap" data-table>
     <table>
       <thead>
@@ -88,14 +122,140 @@
   {% endif %}
 </section>
 
-<section class="card">
+{% set partial_rows = sonarr | selectattr('partial') | list %}
+{% if partial_rows %}
+<section class="card section" data-filterable>
+  <div class="card-head">
+    <h2>Moved, but short</h2>
+    <span class="sub">
+      {{ partial_rows|length }} series &middot;
+      {{ migration.partial_missing_episodes }} episodes behind
+    </span>
+  </div>
+
+  <p class="note">
+    In both libraries, but Shoko holds fewer episodes than Sonarr does - usually a
+    half-finished move. Shoko generally doesn't count specials while Sonarr does,
+    so a gap of one or two is often nothing. Both raw counts are shown rather than
+    a verdict.
+  </p>
+
+  <div class="toolbar">
+    <input class="search" type="text" data-filter-input
+           placeholder="Search titles..." autocomplete="off">
+    <span class="sub" data-filter-count></span>
+  </div>
+
+  <div class="table-wrap" data-table>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="num">In Sonarr</th>
+          <th scope="col" class="sortable" data-type="num">In Shoko</th>
+          <th scope="col" class="sortable" data-type="num">Behind</th>
+          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in partial_rows | sort(attribute='episode_file_count', reverse=true) %}
+        <tr>
+          <td class="title">
+            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+               target="_blank" rel="noopener">{{ row.title }}</a>
+          </td>
+          <td class="num">{{ row.episode_file_count }}</td>
+          <td class="num">{{ row.shoko_episodes }}</td>
+          <td class="num">{{ row.episode_file_count - row.shoko_episodes }}</td>
+          <td class="num">{{ row.size_gb }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if shoko %}
+<section class="card section" data-filterable>
+  <div class="card-head">
+    <h2>Only in Shoko</h2>
+    <span class="sub">
+      {{ shoko|length }} series &middot; {{ migration.shoko_only_episodes }} episodes
+    </span>
+  </div>
+
+  <p class="note">
+    Shoko holds the only copies of these. <strong>Not in Sonarr</strong> means
+    Sonarr never had the series - moved and cleaned up, or picked up fresh.
+    <strong>Monitored</strong> means Sonarr still tracks it but has nothing on
+    disk, so the move is done and the Sonarr entry is just a leftover; those also
+    appear under &ldquo;already in both&rdquo;, which goes on the series existing
+    in Sonarr rather than on what it holds.
+    {% if migration.shoko_unmapped %}
+    A further {{ migration.shoko_unmapped }} Shoko series have no TVDB ID at all -
+    mostly movies and OVAs, plus anything the mapping file hasn't caught up with -
+    so they can't be checked against Sonarr either way.
+    {% endif %}
+  </p>
+
+  <div class="toolbar">
+    <input class="search" type="text" data-filter-input
+           placeholder="Search titles..." autocomplete="off">
+    <span class="sub" data-filter-count></span>
+  </div>
+
+  <div class="table-wrap" data-table>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="num">Episodes</th>
+          <th scope="col" class="sortable" data-type="text">Sonarr</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in shoko | sort(attribute='episodes', reverse=true) %}
+        <tr>
+          <td class="title">
+            {% if row.anidb_id %}
+            <a href="https://anidb.net/anime/{{ row.anidb_id }}"
+               target="_blank" rel="noopener">{{ row.title }}</a>
+            {% else %}
+            {{ row.title }}
+            {% endif %}
+          </td>
+          <td class="num">{{ row.episodes }}</td>
+          <td>
+            {% if row.sonarr_status == 'wanted' %}
+            <span class="pill pill-warn"
+                  title="Sonarr has the series but no episode files for it">Monitored</span>
+            {% else %}
+            <span class="pill pill-muted">Not in Sonarr</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% set matched = sonarr | selectattr('migrated') | list %}
+<section class="card" data-filterable>
   <div class="card-head">
     <h2>Already in both</h2>
     <span class="sub">{{ migration.migrated }} series &middot; {{ migration.migrated_size_gb }} GB</span>
   </div>
 
-  {% set matched = sonarr | selectattr('migrated') | list %}
   {% if matched %}
+  <div class="toolbar">
+    <input class="search" type="text" data-filter-input
+           placeholder="Search titles..." autocomplete="off">
+    <span class="sub" data-filter-count></span>
+  </div>
+
   <div class="table-wrap" data-table>
     <table>
       <thead>

@@ -30,6 +30,9 @@ class Entry:
     image: str
     owned: bool
     is_franchise_root: bool
+    # A prequel season of this show is already in Shoko - i.e. this is the next
+    # season of something being followed, not a new franchise.
+    sequel_of_owned: bool = False
     format: str = ""
     status: str = ""
     genres: List[str] = field(default_factory=list)
@@ -55,6 +58,38 @@ class SonarrEntry:
     episode_count: int
     size_gb: float
     migrated: bool
+    # Episodes Shoko holds under this TVDB ID. A series that is in both but
+    # noticeably short on Shoko's side is a half-finished move, not a done one.
+    shoko_episodes: int = 0
+    partial: bool = False
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class ShokoEntry:
+    """One Shoko series and where it stands in Sonarr.
+
+    The mirror image of SonarrEntry: the migration is only legible from both
+    sides, since a series Sonarr never had still had to come from somewhere.
+
+    `sonarr_status` reuses the SONARR_* states rather than a bool because most
+    of a Shoko library - every movie, OVA and anything the mapping file hasn't
+    caught up with - has no TVDB ID at all. Those are `unmapped`, meaning "no
+    way to tell", and calling them Shoko-only would bury the real answers.
+    """
+
+    title: str
+    anidb_id: str
+    # Every TVDB ID this series resolves to. Usually one, but a series can
+    # carry both its own (possibly stale) ID and one from the mapping file, and
+    # either may be the one Sonarr knows it by.
+    tvdb_ids: List[str] = field(default_factory=list)
+    tvdb_id: str = ""
+    episodes: int = 0
+    sonarr_status: str = SONARR_UNKNOWN
+    sonarr_episodes: int = 0
 
     def to_dict(self):
         return asdict(self)

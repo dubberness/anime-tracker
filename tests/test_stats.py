@@ -1,7 +1,15 @@
 """Stats, tiers and run-over-run diffing."""
 
 from core import stats as stats_mod
-from core.models import SONARR_UNKNOWN, Entry, SonarrEntry
+from core.models import (
+    SONARR_MISSING,
+    SONARR_OWNED,
+    SONARR_UNKNOWN,
+    SONARR_UNMAPPED,
+    Entry,
+    ShokoEntry,
+    SonarrEntry,
+)
 
 
 def entry(rank, owned, score=80, year=2015, root=True, genres=None, mal=None,
@@ -137,6 +145,39 @@ def test_migration_stats_with_no_sonarr_data():
     migration = stats_mod.build_migration_stats([])
     assert migration["total"] == 0
     assert migration["completion"] == 0
+
+
+def test_migration_stats_without_shoko_rows_keeps_the_original_shape():
+    """finish_run writes these six to the history table, so they can't move."""
+    migration = stats_mod.build_migration_stats([
+        SonarrEntry("A", 1, "continuing", 10, 12, 5.0, True),
+    ])
+    assert set(migration) == {
+        "total", "migrated", "remaining", "completion",
+        "remaining_size_gb", "migrated_size_gb",
+        "partial", "partial_missing_episodes",
+    }
+
+
+def test_migration_stats_counts_both_sides():
+    rows = [
+        SonarrEntry("A", 1, "continuing", 24, 24, 5.0, True,
+                    shoko_episodes=12, partial=True),
+        SonarrEntry("B", 2, "ended", 20, 20, 7.5, False),
+    ]
+    shoko = [
+        ShokoEntry("In both", "1", ["1"], "1", 12, SONARR_OWNED),
+        ShokoEntry("Only here", "2", ["2"], "2", 8, SONARR_MISSING),
+        ShokoEntry("A movie", "3", [], "", 1, SONARR_UNMAPPED),
+    ]
+    migration = stats_mod.build_migration_stats(rows, shoko)
+
+    assert migration["partial"] == 1
+    assert migration["partial_missing_episodes"] == 12
+    assert migration["shoko_total"] == 3
+    assert migration["shoko_only"] == 1
+    assert migration["shoko_only_episodes"] == 8
+    assert migration["shoko_unmapped"] == 1
 
 
 # ==========================

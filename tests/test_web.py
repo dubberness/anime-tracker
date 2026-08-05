@@ -140,6 +140,75 @@ def test_library_and_migration_pages_render(client, ctx):
     assert client.get("/migration").status_code == 200
 
 
+def test_migration_page_survives_results_from_before_the_shoko_view(client, ctx):
+    """A results.json written before this feature has no shoko key, and its
+    migration block has none of the new counts. Jinja raises on attribute
+    access through a missing key, so this is a 500 rather than a blank."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload.pop("shoko", None)
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    response = client.get("/migration")
+    assert response.status_code == 200
+    assert b"Only in Shoko" not in response.data
+
+
+def test_migration_page_lists_what_is_only_in_shoko(client, ctx):
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload["shoko"] = [{
+        "title": "Shoko Only Show", "anidb_id": "42", "tvdb_ids": ["900"],
+        "tvdb_id": "900", "episodes": 13, "sonarr_status": "missing",
+        "sonarr_episodes": 0,
+    }]
+    payload["migration"].update({
+        "shoko_total": 1, "shoko_only": 1, "shoko_only_episodes": 13,
+        "shoko_unmapped": 0, "partial": 0, "partial_missing_episodes": 0,
+    })
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    response = client.get("/migration")
+    assert response.status_code == 200
+    assert b"Only in Shoko" in response.data
+    assert b"Shoko Only Show" in response.data
+
+
+def test_migration_page_warns_instead_of_reporting_zero_when_sonarr_is_down(client, ctx):
+    """A dead Sonarr used to render as a confident "0 of 0 - 0%"."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload["sonarr_error"] = "Connection refused"
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    response = client.get("/migration")
+    assert response.status_code == 200
+    assert b"Connection refused" in response.data
+    assert b"0%" not in response.data
+
+
+def test_the_migration_trend_skips_runs_where_sonarr_was_unreachable(ctx):
+    """Those runs recorded zero series; plotting them invents a crash to 0%."""
+    from web.server import _migration_trend_points
+
+    points = _migration_trend_points([
+        {"started_at": "2026-01-01T00:00:00", "sonarr_shows": 10,
+         "sonarr_migrated": 5},
+        {"started_at": "2026-01-02T00:00:00", "sonarr_shows": 0,
+         "sonarr_migrated": 0},
+        {"started_at": "2026-01-03T00:00:00", "sonarr_shows": 10,
+         "sonarr_migrated": 8},
+    ])
+
+    assert [p["value"] for p in points] == [50.0, 80.0]
+
+
 def test_seasons_page_renders_the_season_tabs(client, ctx):
     configure(ctx)
     seed_results(ctx)
@@ -346,6 +415,35 @@ def test_untracking_an_auto_pick_excludes_it(client, ctx):
 
     assert response.get_json()["excluded"] is True
     assert ctx.storage.autobrr_excluded_ids() == {10}
+
+
+def test_untracking_an_upcoming_season_auto_pick_excludes_it(client, ctx):
+    """The drift guard: the run seeds from next season too, so the web layer
+    has to agree that those are auto-picks or the next run re-adds them."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["seasons"].append({
+        "season": "FALL", "year": 2026, "label": "Fall 2026",
+        "is_current": False, "is_upcoming": True,
+        "sorts": {
+            "popularity": [
+                {"anilist_id": 20, "title": "Next Season Sequel", "title_alt": "",
+                 "owned": False, "sequel_of_owned": True, "mal_id": "20",
+                 "anidb_id": "", "rank": 1, "score": 80, "popularity": 3000,
+                 "image": "", "is_franchise_root": False,
+                 "sonarr_status": "unknown"},
+            ],
+            "trending": [], "score": [],
+        },
+    })
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+    ctx.storage.track_autobrr(20, "Next Season Sequel", source="auto")
+
+    response = client.delete("/api/autobrr/track/20")
+
+    assert response.get_json()["excluded"] is True
+    assert ctx.storage.autobrr_excluded_ids() == {20}
 
 
 def test_untracking_a_manual_pick_does_not_exclude_it(client, ctx):
