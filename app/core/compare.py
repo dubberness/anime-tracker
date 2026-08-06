@@ -181,7 +181,7 @@ def build_shoko_index(shoko_series, mappings=None):
 
 
 def mapping_tvdb_ids(mappings):
-    """Every TVDB ID the mapping file knows about.
+    """Every TVDB ID reachable from a Shoko series, via the mapping file.
 
     Shoko reports AniDB IDs and Sonarr reports TVDB ones, so the mapping is the
     only bridge between them. A Sonarr series whose TVDB ID appears nowhere in
@@ -190,12 +190,11 @@ def mapping_tvdb_ids(mappings):
 
     Happens when TheTVDB splits a series that the mapping still records under
     the old combined entry, which is common for long franchises.
+
+    Derived from the same index the matching itself crosses, so "reachable"
+    means the same thing in both places rather than merely looking like it.
     """
-    return {
-        str(entry["tvdb_id"])
-        for entry in (mappings or {}).values()
-        if isinstance(entry, dict) and entry.get("tvdb_id")
-    }
+    return set(_anidb_to_tvdb(mappings).values())
 
 
 def extract_shoko_ids(shoko_series, mappings=None):
@@ -231,30 +230,18 @@ def annotate_shoko_sonarr(entries, sonarr_index, sonarr_available=True):
     migrated series as Shoko-only.
     """
     for entry in entries:
-        if not sonarr_available:
-            entry.sonarr_status = SONARR_UNKNOWN
-            continue
+        matched = next(
+            (str(t) for t in entry.tvdb_ids if str(t) in (sonarr_index or {})), None
+        )
+        if matched:
+            entry.tvdb_id = matched
 
-        if not entry.tvdb_ids:
-            entry.sonarr_status = SONARR_UNMAPPED
-            continue
-
-        matched = None
-        for tvdb_id in entry.tvdb_ids:
-            if str(tvdb_id) in (sonarr_index or {}):
-                matched = str(tvdb_id)
-                break
-
-        if matched is None:
-            entry.sonarr_status = SONARR_MISSING
-            continue
-
-        series = sonarr_index[matched]
-        files = series.get("episode_file_count", 0) or 0
-
-        entry.tvdb_id = matched
-        entry.sonarr_episodes = files
-        entry.sonarr_status = SONARR_OWNED if files else SONARR_WANTED
+        # No season to narrow by here - a Shoko series is already roughly one
+        # season - so sonarr_status falls through to the series-wide file count,
+        # and every state comes from the one place that defines them.
+        entry.sonarr_status = sonarr_status(
+            matched or entry.tvdb_id, None, sonarr_index, sonarr_available,
+        )
 
     return entries
 
@@ -299,28 +286,45 @@ def alt_title_of(media, primary):
 # something you follow.
 SEASON_FORMATS = ("TV", "TV_SHORT", "ONA", "MOVIE")
 
+# How far Shoko may trail Sonarr's file count before it reads as a half-done
+# move. Shoko generally leaves specials out where Sonarr counts season 0, so
+# the two are close but never strictly comparable.
+EPISODE_GAP_TOLERANCE = 1
 
-def _relation_ids(media, relation_type, formats=None):
-    """AniList IDs of the ANIME nodes on one kind of relation edge.
 
-    A node whose format is missing is kept: the cached AniList response
-    predates that field being requested, and dropping those would silently
-    turn the flag off everywhere until the cache expired.
+def _relation_nodes(media, relation_type):
+    """(AniList ID, format) for each ANIME node on one kind of relation edge.
+
+    Format comes back alongside the ID rather than being filtered here, because
+    callers want the same edges read two different ways and one walk should
+    serve both. It is "" when AniList didn't report one.
     """
-    ids = set()
+    nodes = []
     relations = media.get("relations") or {}
 
     for edge in relations.get("edges") or []:
         node = edge.get("node") or {}
         if edge.get("relationType") != relation_type or node.get("type") != "ANIME":
             continue
-        if formats and node.get("format") and node["format"] not in formats:
-            continue
         node_id = _as_int(node.get("id"))
         if node_id is not None:
-            ids.add(node_id)
+            nodes.append((node_id, node.get("format") or ""))
 
-    return ids
+    return nodes
+
+
+def matches_shoko(mal_id, anidb_id, mal_ids, anidb_ids):
+    """Whether Shoko has the thing these two IDs describe.
+
+    The app's central matching rule, in one place: either ID is sufficient,
+    because the mapping file knows one or the other for most titles and rarely
+    both. Everything that asks "does Shoko have this?" goes through here so the
+    answer can't come out differently in two parts of the same page.
+    """
+    return bool(
+        (mal_id and str(mal_id) in mal_ids)
+        or (anidb_id and str(anidb_id) in anidb_ids)
+    )
 
 
 def owned_anilist_ids(mappings, mal_ids, anidb_ids):
@@ -330,16 +334,12 @@ def owned_anilist_ids(mappings, mal_ids, anidb_ids):
     AniList IDs, so the two have to be brought into the same namespace before
     "is the prequel of this something I own?" can be asked at all.
     """
-    owned = set()
-
-    for anilist_id, entry in (mappings or {}).items():
-        mal_id = entry.get("mal_id")
-        anidb_id = entry.get("anidb_id")
-        if ((mal_id and str(mal_id) in mal_ids)
-                or (anidb_id and str(anidb_id) in anidb_ids)):
-            owned.add(anilist_id)
-
-    return owned
+    return {
+        anilist_id
+        for anilist_id, entry in (mappings or {}).items()
+        if matches_shoko(entry.get("mal_id"), entry.get("anidb_id"),
+                         mal_ids, anidb_ids)
+    }
 
 
 def recommendation_score(score, popularity):
@@ -416,19 +416,21 @@ def _build_entry(media, mapping, mal_ids, anidb_ids,
     score = media.get("averageScore") or 0
     popularity = media.get("popularity") or 0
 
-    owned = bool(
-        (mal_id and str(mal_id) in mal_ids)
-        or (anidb_id and str(anidb_id) in anidb_ids)
-    )
+    owned = matches_shoko(mal_id, anidb_id, mal_ids, anidb_ids)
 
     title = title_of(media)
 
-    # Two readings of the same edges, and they differ on purpose. Being a
-    # franchise root means having no earlier entry of any kind, so it stays
-    # unfiltered; "a new season of something you own" only wants prequels that
-    # are themselves a season, not the recap special.
-    prequel_ids = _relation_ids(media, "PREQUEL")
-    season_prequel_ids = _relation_ids(media, "PREQUEL", SEASON_FORMATS)
+    # One walk, two readings, and they differ on purpose. Being a franchise
+    # root means having no earlier entry of any kind; "a new season of
+    # something you own" only counts prequels that are themselves a season,
+    # not the recap special. A node with no format is kept either way, since a
+    # cached AniList response predates that field being requested.
+    prequels = _relation_nodes(media, "PREQUEL")
+    sequel_of_owned = bool(owned_ids) and any(
+        node_id in owned_ids
+        for node_id, node_format in prequels
+        if not node_format or node_format in SEASON_FORMATS
+    )
 
     return Entry(
         rank=media.get("rank", 0) if rank is None else rank,
@@ -444,8 +446,8 @@ def _build_entry(media, mapping, mal_ids, anidb_ids,
         anidb_id=str(anidb_id) if anidb_id else "",
         image=(media.get("coverImage") or {}).get("large", ""),
         owned=owned,
-        is_franchise_root=not prequel_ids,
-        sequel_of_owned=bool(owned_ids and (season_prequel_ids & owned_ids)),
+        is_franchise_root=not prequels,
+        sequel_of_owned=sequel_of_owned,
         format=media.get("format") or "",
         status=media.get("status") or "",
         genres=media.get("genres") or [],
@@ -521,7 +523,7 @@ def build_season_entries(media_list, mappings, mal_ids, anidb_ids,
     return entries
 
 
-def compare_sonarr(sonarr_series, tvdb_ids, shoko_episodes=None, tolerance=1,
+def compare_sonarr(sonarr_series, tvdb_ids, shoko_episodes=None,
                    mapped_tvdb=None):
     """Work out which Sonarr series already exist in Shoko, matched on TVDB.
 
@@ -562,7 +564,10 @@ def compare_sonarr(sonarr_series, tvdb_ids, shoko_episodes=None, tolerance=1,
             shoko_episodes=in_shoko,
             # Zero on Shoko's side isn't a partial move, it's just not migrated
             # - or a version whose episode counts don't read at all.
-            partial=bool(migrated and in_shoko and files - in_shoko > tolerance),
+            partial=bool(
+                migrated and in_shoko
+                and files - in_shoko > EPISODE_GAP_TOLERANCE
+            ),
             # Only meaningful for a series that didn't match: one that did is
             # answered already, however the mapping feels about it.
             unmappable=bool(

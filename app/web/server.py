@@ -182,24 +182,25 @@ def _register_pages(app, ctx):
                                status=ctx.state.snapshot())
 
 
+def _run_label(row):
+    """How a run is labelled on any chart's x-axis."""
+    started = row.get("started_at") or ""
+    try:
+        return datetime.fromisoformat(started).strftime("%d %b %H:%M")
+    except (ValueError, TypeError):
+        return started
+
+
 def _trend_points(history):
     """Shape run history for the completion-over-time chart."""
-    points = []
-
-    for row in history:
-        started = row.get("started_at") or ""
-        try:
-            label = datetime.fromisoformat(started).strftime("%d %b %H:%M")
-        except (ValueError, TypeError):
-            label = started
-
-        points.append({
-            "label": label,
+    return [
+        {
+            "label": _run_label(row),
             "value": float(row.get("completion") or 0),
             "detail": f"{row.get('owned', 0)} of {row.get('tracked', 0)} owned",
-        })
-
-    return points
+        }
+        for row in history
+    ]
 
 
 def _migration_trend_points(history):
@@ -217,15 +218,9 @@ def _migration_trend_points(history):
         if not total:
             continue
 
-        started = row.get("started_at") or ""
-        try:
-            label = datetime.fromisoformat(started).strftime("%d %b %H:%M")
-        except (ValueError, TypeError):
-            label = started
-
         migrated = row.get("sonarr_migrated") or 0
         points.append({
-            "label": label,
+            "label": _run_label(row),
             "value": round(migrated / total * 100, 2),
             "detail": f"{migrated} of {total} in Shoko",
         })

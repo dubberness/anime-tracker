@@ -147,21 +147,20 @@ def test_migration_stats_with_no_sonarr_data():
     assert migration["completion"] == 0
 
 
-def test_migration_stats_without_shoko_rows_keeps_the_original_shape():
-    """finish_run writes these six to the history table, so they can't move."""
+def test_migration_stats_without_shoko_rows_keeps_the_sonarr_side_shape():
+    """Every key here has a reader - the page or Storage.finish_run."""
     migration = stats_mod.build_migration_stats([
         SonarrEntry("A", 1, "continuing", 10, 12, 5.0, True),
     ])
     assert set(migration) == {
         "total", "migrated", "remaining", "completion",
         "remaining_size_gb", "migrated_size_gb",
-        "partial", "partial_missing_episodes",
-        "unmappable", "unmappable_size_gb",
+        "partial", "partial_missing_episodes", "unmappable",
     }
 
 
 def test_unmappable_series_still_count_as_remaining():
-    """The six history keys keep their meaning; the page does the subtracting."""
+    """Narrowing `remaining` would put a step in the run-history trend."""
     rows = [
         SonarrEntry("A", 1, "ended", 10, 12, 5.0, False),
         SonarrEntry("B", 2, "ended", 20, 20, 7.5, False, unmappable=True),
@@ -171,7 +170,6 @@ def test_unmappable_series_still_count_as_remaining():
     assert migration["remaining"] == 2
     assert migration["remaining_size_gb"] == 12.5
     assert migration["unmappable"] == 1
-    assert migration["unmappable_size_gb"] == 7.5
 
 
 def test_migration_stats_counts_both_sides():
@@ -189,8 +187,6 @@ def test_migration_stats_counts_both_sides():
 
     assert migration["partial"] == 1
     assert migration["partial_missing_episodes"] == 12
-    assert migration["shoko_total"] == 3
-    assert migration["shoko_only"] == 1
     assert migration["shoko_only_episodes"] == 8
     assert migration["shoko_unmapped"] == 1
 

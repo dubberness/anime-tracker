@@ -126,16 +126,20 @@ def build_comparison(results, sonarr_available=False):
 
 
 def build_migration_stats(sonarr_results, shoko_entries=None):
-    """Both sides of the migration.
+    """Both sides of the migration, as one summary.
 
-    The first six keys are the original Sonarr-side view and are written to the
-    run history, so they keep their exact names and meanings. The Shoko-side
-    counts are additive and absent when no Shoko rows are passed.
+    `migrated` and `remaining_size_gb` are written to the run history by
+    Storage.finish_run, so their meaning is fixed - `remaining` deliberately
+    still counts the unmappable rows, since narrowing it would put a step in
+    the trend. The page splits its own tables out of the rows rather than
+    reading counts from here, so it can render results.json files written
+    before any of these keys existed.
+
+    The Shoko-side counts are additive and absent when no Shoko rows are given.
     """
     migrated = [r for r in sonarr_results if r.migrated]
     remaining = [r for r in sonarr_results if not r.migrated]
     partial = [r for r in sonarr_results if r.partial]
-    unmappable = [r for r in sonarr_results if r.unmappable]
     total = len(sonarr_results)
 
     stats = {
@@ -149,19 +153,12 @@ def build_migration_stats(sonarr_results, shoko_entries=None):
         "partial_missing_episodes": sum(
             max(r.episode_file_count - r.shoko_episodes, 0) for r in partial
         ),
-        # Counted inside `remaining` as well, deliberately: the six keys above
-        # go to the run history and changing what they mean would put a step in
-        # the trend. The page subtracts these for what it shows.
-        "unmappable": len(unmappable),
-        "unmappable_size_gb": round(sum(r.size_gb for r in unmappable), 2),
+        "unmappable": sum(1 for r in sonarr_results if r.unmappable),
     }
 
     if shoko_entries is not None:
-        only = shoko_only(shoko_entries)
         stats.update({
-            "shoko_total": len(shoko_entries),
-            "shoko_only": len(only),
-            "shoko_only_episodes": sum(e.episodes for e in only),
+            "shoko_only_episodes": sum(e.episodes for e in shoko_only(shoko_entries)),
             "shoko_unmapped": sum(
                 1 for e in shoko_entries if e.sonarr_status == SONARR_UNMAPPED
             ),

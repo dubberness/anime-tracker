@@ -179,7 +179,7 @@ def test_migration_page_separates_series_it_cannot_check(client, ctx):
     ctx.runner.load_cached_results()
 
     body = client.get("/migration").data.decode()
-    unchecked = body.index("Can't be checked")
+    unchecked = body.index("Can’t be checked")
     still_only = body.index("Still only in Sonarr")
 
     assert "Digimon Adventure 02" in body
@@ -204,7 +204,7 @@ def test_migration_page_survives_rows_from_before_the_unmappable_flag(client, ct
 
     body = client.get("/migration").data.decode()
     assert "Old Shape Show" in body
-    assert "Can't be checked" not in body
+    assert "Can’t be checked" not in body
 
 
 def test_migration_sections_are_collapsible_and_start_closed(client, ctx):

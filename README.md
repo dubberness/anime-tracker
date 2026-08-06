@@ -171,7 +171,7 @@ Sonarr's view alone can't say where a series came from.
 | Section | What it means |
 |---|---|
 | **Still only in Sonarr** | The work list — Sonarr has files, Shoko doesn't |
-| **Can't be checked** | Sonarr's TVDB ID appears nowhere in the mapping file, so there's no route to the AniDB IDs Shoko reports. Unanswerable, not a no — kept out of the work list |
+| **Can’t be checked** | Sonarr's TVDB ID appears nowhere in the mapping file, so there's no route to the AniDB IDs Shoko reports. Unanswerable, not a no — kept out of the work list |
 | **Moved, but short** | In both, but Shoko holds fewer episodes than Sonarr — usually a half-finished move |
 | **Only in Shoko** | Shoko has the only copies. *Not in Sonarr* = Sonarr never had the series; *Monitored* = Sonarr still tracks it with nothing on disk, so the entry is a leftover |
 | **Already in both** | Matched on TVDB ID. Goes on the series existing in Sonarr, not on what it holds, so *Monitored* rows appear here too |
@@ -197,7 +197,7 @@ Two caveats worth knowing:
   worked example: Sonarr has it under TVDB 459436, the mapping maps AniDB 561
   to TVDB 72241 season 2 (the old bundled *Digimon: Digital Monsters* entry),
   and no mapping row mentions 459436 at all. Shoko has the show; the app simply
-  can't prove it. Those land under **Can't be checked** rather than in the work
+  can't prove it. Those land under **Can’t be checked** rather than in the work
   list. The fix is a mapping row upstream in
   [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs).
 
@@ -329,7 +329,7 @@ without building the image; the container itself runs 3.12.
   page render a confident "0 of 0 — 0%". It now says so and holds the figures
   instead, matching how the library page already behaved.
 - New after 4.2.0: Sonarr series whose TVDB ID the mapping file has never heard
-  of are now shown as **Can't be checked** instead of sitting in the work list
+  of are now shown as **Can’t be checked** instead of sitting in the work list
   as though Shoko were missing them. Expect "still only in Sonarr" to drop by
   however many of those you have — nothing changed about what's on disk, and
   the stored completion percentage is unaffected.

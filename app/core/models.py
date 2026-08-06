@@ -92,7 +92,6 @@ class ShokoEntry:
     tvdb_id: str = ""
     episodes: int = 0
     sonarr_status: str = SONARR_UNKNOWN
-    sonarr_episodes: int = 0
 
     def to_dict(self):
         return asdict(self)

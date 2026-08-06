@@ -108,18 +108,23 @@ half-finished config is a normal "needs setup" state, not a startup failure
   is movies and OVAs; collapsing that distinction into a bool floods the
   "only in Shoko" view with false positives.
 - The same on the Sonarr side: `SonarrEntry.unmappable` marks a series whose
-  TVDB ID appears in no mapping row (`compare.mapping_tvdb_ids`), so no answer
-  is possible either way and the page keeps it out of the work list. Build that
-  set from the *same* `mapping_lookup` the matching uses — it drops rows with no
-  AniList ID, and those TVDB IDs really are unreachable, so the flag stays
-  consistent with `_anidb_to_tvdb` by construction. Typical cause is TheTVDB
-  splitting a series the mapping still records under the old combined entry.
+  TVDB ID nothing can reach (`compare.mapping_tvdb_ids`), so no answer is
+  possible either way and the page keeps it out of the work list. That set is
+  derived from `_anidb_to_tvdb` — the very index the matching crosses — so
+  "reachable" means the same thing in both places rather than two similar walks
+  that could drift. Typical cause is TheTVDB splitting a series the mapping
+  still records under the old combined entry.
+- `matches_shoko` is the one home of the MAL-or-AniDB ownership rule. `Entry.owned`,
+  `owned_anilist_ids` and `autobrr.is_now_owned` all go through it; the flags it
+  feeds are rendered side by side, so a second copy would show up as the same
+  row disagreeing with itself.
 - `sequel_of_owned` reads `PREQUEL` edges (AniList IDs) and resolves them
   through the AniList-ID-keyed mapping into the Shoko sets, via
-  `owned_anilist_ids`. It filters prequels to `SEASON_FORMATS`; a node with no
-  `format` is kept, since a cached AniList response predates that field being
-  requested. `is_franchise_root` deliberately stays **unfiltered** — the two
-  read the same edges and mean different things.
+  `owned_anilist_ids`. `_relation_nodes` returns `(id, format)` from one walk
+  because the same edges are read two ways: `sequel_of_owned` keeps only
+  `SEASON_FORMATS` (a node with no `format` is kept — a cached AniList response
+  predates that field being requested), while `is_franchise_root` deliberately
+  stays **unfiltered**.
 
 **Graceful degradation is a deliberate, repeated pattern** — preserve it
 when touching these paths:
