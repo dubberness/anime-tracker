@@ -5,6 +5,7 @@ itself owns the filter - indexers, quality, release groups, download client.
 All this module decides is the set of *titles* that filter should match.
 """
 
+from core import compare
 from logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -16,16 +17,12 @@ MANUAL = "manual"
 def is_now_owned(row, mal_ids, anidb_ids):
     """Whether Shoko has picked up a tracked show since it was added.
 
-    Same rule as compare.compare_collections, but against the IDs stored on
-    the row rather than a live mapping lookup - a tracked show can be too new
-    or too obscure to appear in the tracked list at all.
+    The same rule the rest of the app matches on, but against the IDs stored
+    on the row rather than a live mapping lookup - a tracked show can be too
+    new or too obscure to appear in the tracked list at all.
     """
-    mal_id = row.get("mal_id")
-    anidb_id = row.get("anidb_id")
-
-    return bool(
-        (mal_id and str(mal_id) in mal_ids)
-        or (anidb_id and str(anidb_id) in anidb_ids)
+    return compare.matches_shoko(
+        row.get("mal_id"), row.get("anidb_id"), mal_ids, anidb_ids,
     )
 
 

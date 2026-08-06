@@ -475,14 +475,18 @@
       const count = $("[data-filter-count]", root);
       const rows = Array.from(table.tBodies[0].rows);
 
+      // Searched once here rather than per keystroke. textContent for the same
+      // reason DataTable uses it - a row in a collapsed section has no
+      // innerText and would never match. These rows are server-rendered and
+      // never change, so the text can't go stale.
+      const haystack = rows.map(row => row.textContent.toLowerCase());
+
       const apply = () => {
         const term = input.value.trim().toLowerCase();
         let shown = 0;
 
-        rows.forEach(row => {
-          // textContent for the same reason DataTable uses it - a row in a
-          // collapsed section has no innerText and would never match.
-          const hit = !term || row.textContent.toLowerCase().includes(term);
+        rows.forEach((row, i) => {
+          const hit = !term || haystack[i].includes(term);
           row.hidden = !hit;
           if (hit) shown++;
         });
@@ -492,7 +496,12 @@
         }
       };
 
-      input.addEventListener("input", apply);
+      // Same debounce as the library search, so the two behave alike.
+      let timer;
+      input.addEventListener("input", () => {
+        clearTimeout(timer);
+        timer = setTimeout(apply, 140);
+      });
       apply();
     }
   };

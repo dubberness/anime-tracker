@@ -17,9 +17,7 @@ def media(anilist_id, rank, popularity=100000, score=80, prequel=False, **kwargs
         "relations": {"edges": []},
     }
     if prequel:
-        entry["relations"]["edges"].append(
-            {"relationType": "PREQUEL", "node": {"id": 1, "type": "ANIME"}}
-        )
+        entry["relations"]["edges"].append(prequel_edge(1))
     entry.update(kwargs)
     return entry
 
@@ -259,9 +257,14 @@ def test_compare_sonarr_still_works_without_shoko_counts():
 # Series that can't be checked either way
 # ==========================
 
-def test_mapping_tvdb_ids_collects_every_known_tvdb_id():
-    mappings = {1: {"tvdb_id": 100}, 2: {"tvdb_id": "200"},
-                3: {"mal_id": "9"}, 4: {"tvdb_id": None}}
+def test_mapping_tvdb_ids_collects_every_reachable_tvdb_id():
+    """Reachable means "the AniDB->TVDB index crosses it", the same route the
+    matching takes - a row with no AniDB ID is no bridge at all."""
+    mappings = {1: {"anidb_id": "11", "tvdb_id": 100},
+                2: {"anidb_id": "22", "tvdb_id": "200"},
+                3: {"anidb_id": "33", "mal_id": "9"},
+                4: {"anidb_id": "44", "tvdb_id": None},
+                5: {"tvdb_id": 500}}
     assert compare.mapping_tvdb_ids(mappings) == {"100", "200"}
     assert compare.mapping_tvdb_ids(None) == set()
 
