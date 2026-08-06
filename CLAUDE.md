@@ -107,6 +107,13 @@ half-finished config is a normal "needs setup" state, not a startup failure
 - A Shoko series with no TVDB ID is `unmapped`, not `missing`. Most of a library
   is movies and OVAs; collapsing that distinction into a bool floods the
   "only in Shoko" view with false positives.
+- The same on the Sonarr side: `SonarrEntry.unmappable` marks a series whose
+  TVDB ID appears in no mapping row (`compare.mapping_tvdb_ids`), so no answer
+  is possible either way and the page keeps it out of the work list. Build that
+  set from the *same* `mapping_lookup` the matching uses — it drops rows with no
+  AniList ID, and those TVDB IDs really are unreachable, so the flag stays
+  consistent with `_anidb_to_tvdb` by construction. Typical cause is TheTVDB
+  splitting a series the mapping still records under the old combined entry.
 - `sequel_of_owned` reads `PREQUEL` edges (AniList IDs) and resolves them
   through the AniList-ID-keyed mapping into the Shoko sets, via
   `owned_anilist_ids`. It filters prequels to `SEASON_FORMATS`; a node with no

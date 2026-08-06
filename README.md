@@ -171,6 +171,7 @@ Sonarr's view alone can't say where a series came from.
 | Section | What it means |
 |---|---|
 | **Still only in Sonarr** | The work list — Sonarr has files, Shoko doesn't |
+| **Can't be checked** | Sonarr's TVDB ID appears nowhere in the mapping file, so there's no route to the AniDB IDs Shoko reports. Unanswerable, not a no — kept out of the work list |
 | **Moved, but short** | In both, but Shoko holds fewer episodes than Sonarr — usually a half-finished move |
 | **Only in Shoko** | Shoko has the only copies. *Not in Sonarr* = Sonarr never had the series; *Monitored* = Sonarr still tracks it with nothing on disk, so the entry is a leftover |
 | **Already in both** | Matched on TVDB ID. Goes on the series existing in Sonarr, not on what it holds, so *Monitored* rows appear here too |
@@ -185,6 +186,21 @@ Two caveats worth knowing:
   anything the mapping file hasn't caught up with, have no TVDB ID at all —
   they're counted separately rather than listed as Shoko-only, which would
   otherwise bury the rows that mean something.
+- **The same applies in reverse, and it's easy to miss.** When TheTVDB splits
+  a series the mapping still records under the old combined entry, Sonarr ends
+  up on the new ID and nothing can bridge it. *Digimon Adventure 02* is the
+  worked example: Sonarr has it under TVDB 459436, the mapping maps AniDB 561
+  to TVDB 72241 season 2 (the old bundled *Digimon: Digital Monsters* entry),
+  and no mapping row mentions 459436 at all. Shoko has the show; the app simply
+  can't prove it. Those land under **Can't be checked** rather than in the work
+  list. The fix is a mapping row upstream in
+  [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs).
+
+Note that "can't be checked" is judged against the same mapping lookup the
+matching itself uses — which only keeps rows carrying an AniList ID, since that
+is what the rest of the app is keyed on. A TVDB ID present in the raw file but
+on a row without an AniList ID is still unreachable in practice, and is counted
+here as such.
 
 A run where Sonarr couldn't be reached records zeros in the history table, and
 the progress chart skips those rather than drawing a drop to 0%.
@@ -307,6 +323,11 @@ without building the image; the container itself runs 3.12.
 - Fixed after 4.2.0: a configured-but-unreachable Sonarr made the Migration
   page render a confident "0 of 0 — 0%". It now says so and holds the figures
   instead, matching how the library page already behaved.
+- New after 4.2.0: Sonarr series whose TVDB ID the mapping file has never heard
+  of are now shown as **Can't be checked** instead of sitting in the work list
+  as though Shoko were missing them. Expect "still only in Sonarr" to drop by
+  however many of those you have — nothing changed about what's on disk, and
+  the stored completion percentage is unaffected.
 - New after 4.2.0: the Migration page gained the Shoko side of the comparison
   ("only in Shoko", and moves that came up short on episodes). The headline
   percentage and the run history are unchanged — the new sections are additive,

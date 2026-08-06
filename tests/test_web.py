@@ -156,6 +156,57 @@ def test_migration_page_survives_results_from_before_the_shoko_view(client, ctx)
     assert b"Only in Shoko" not in response.data
 
 
+def sonarr_row(title, tvdb_id, **kwargs):
+    row = {
+        "title": title, "tvdb_id": tvdb_id, "status": "ended",
+        "episode_file_count": 50, "episode_count": 50, "size_gb": 12.0,
+        "migrated": False, "shoko_episodes": 0, "partial": False,
+        "unmappable": False,
+    }
+    row.update(kwargs)
+    return row
+
+
+def test_migration_page_separates_series_it_cannot_check(client, ctx):
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload["sonarr"] = [
+        sonarr_row("Digimon Adventure 02", 459436, unmappable=True),
+        sonarr_row("Genuinely Missing", 100),
+    ]
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    body = client.get("/migration").data.decode()
+    unchecked = body.index("Can't be checked")
+    still_only = body.index("Still only in Sonarr")
+
+    assert "Digimon Adventure 02" in body
+    # The unmappable one must not also sit in the work list above it.
+    assert body.index("Digimon Adventure 02") > unchecked
+    assert still_only < unchecked
+    assert body.count("Digimon Adventure 02") == 1
+
+
+def test_migration_page_survives_rows_from_before_the_unmappable_flag(client, ctx):
+    """Old rows have no unmappable key; rejectattr must treat that as false
+    rather than dropping every row out of the work list."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    old_row = sonarr_row("Old Shape Show", 100)
+    del old_row["unmappable"]
+    del old_row["partial"]
+    payload["sonarr"] = [old_row]
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    body = client.get("/migration").data.decode()
+    assert "Old Shape Show" in body
+    assert "Can't be checked" not in body
+
+
 def test_migration_page_lists_what_is_only_in_shoko(client, ctx):
     configure(ctx)
     payload = seed_results(ctx)

@@ -256,6 +256,58 @@ def test_compare_sonarr_still_works_without_shoko_counts():
 
 
 # ==========================
+# Series that can't be checked either way
+# ==========================
+
+def test_mapping_tvdb_ids_collects_every_known_tvdb_id():
+    mappings = {1: {"tvdb_id": 100}, 2: {"tvdb_id": "200"},
+                3: {"mal_id": "9"}, 4: {"tvdb_id": None}}
+    assert compare.mapping_tvdb_ids(mappings) == {"100", "200"}
+    assert compare.mapping_tvdb_ids(None) == set()
+
+
+def test_a_tvdb_id_the_mapping_never_heard_of_is_unmappable():
+    """The Digimon Adventure 02 case: TheTVDB split the series, Sonarr picked
+    up the new ID, the mapping still points at the old combined entry."""
+    results = compare.compare_sonarr(
+        [migration_row(459436, files=50)], set(), mapped_tvdb={"72241"},
+    )
+    assert results[0].migrated is False
+    assert results[0].unmappable is True
+
+
+def test_a_mapped_but_absent_series_is_missing_not_unmappable():
+    """A real answer - the mapping knows it and Shoko doesn't have it."""
+    results = compare.compare_sonarr(
+        [migration_row(100, files=24)], set(), mapped_tvdb={"100"},
+    )
+    assert results[0].migrated is False
+    assert results[0].unmappable is False
+
+
+def test_a_sonarr_series_with_no_tvdb_id_at_all_is_unmappable():
+    results = compare.compare_sonarr(
+        [migration_row(None, files=24)], set(), mapped_tvdb={"100"},
+    )
+    assert results[0].unmappable is True
+
+
+def test_a_matched_series_is_never_flagged_unmappable():
+    """It's already answered, whatever the mapping file thinks."""
+    results = compare.compare_sonarr(
+        [migration_row(459436, files=50)], {"459436"}, mapped_tvdb={"72241"},
+    )
+    assert results[0].migrated is True
+    assert results[0].unmappable is False
+
+
+def test_nothing_is_unmappable_when_no_mapping_set_is_passed():
+    """Callers predating the flag expect every row to be answerable."""
+    results = compare.compare_sonarr([migration_row(459436, files=50)], set())
+    assert results[0].unmappable is False
+
+
+# ==========================
 # New seasons of owned shows
 # ==========================
 

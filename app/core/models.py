@@ -62,6 +62,9 @@ class SonarrEntry:
     # noticeably short on Shoko's side is a half-finished move, not a done one.
     shoko_episodes: int = 0
     partial: bool = False
+    # No TVDB ID, or one the mapping file has never heard of, so there is no
+    # route to Shoko's AniDB IDs and no answer either way.
+    unmappable: bool = False
 
     def to_dict(self):
         return asdict(self)
