@@ -135,6 +135,7 @@ def build_migration_stats(sonarr_results, shoko_entries=None):
     migrated = [r for r in sonarr_results if r.migrated]
     remaining = [r for r in sonarr_results if not r.migrated]
     partial = [r for r in sonarr_results if r.partial]
+    unmappable = [r for r in sonarr_results if r.unmappable]
     total = len(sonarr_results)
 
     stats = {
@@ -148,6 +149,11 @@ def build_migration_stats(sonarr_results, shoko_entries=None):
         "partial_missing_episodes": sum(
             max(r.episode_file_count - r.shoko_episodes, 0) for r in partial
         ),
+        # Counted inside `remaining` as well, deliberately: the six keys above
+        # go to the run history and changing what they mean would put a step in
+        # the trend. The page subtracts these for what it shows.
+        "unmappable": len(unmappable),
+        "unmappable_size_gb": round(sum(r.size_gb for r in unmappable), 2),
     }
 
     if shoko_entries is not None:

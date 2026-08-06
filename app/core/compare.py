@@ -180,6 +180,24 @@ def build_shoko_index(shoko_series, mappings=None):
     return entries, mal_ids, anidb_ids, tvdb_ids
 
 
+def mapping_tvdb_ids(mappings):
+    """Every TVDB ID the mapping file knows about.
+
+    Shoko reports AniDB IDs and Sonarr reports TVDB ones, so the mapping is the
+    only bridge between them. A Sonarr series whose TVDB ID appears nowhere in
+    here can't be checked against Shoko at all - not "missing from Shoko",
+    genuinely unanswerable - and saying so beats listing it as work to do.
+
+    Happens when TheTVDB splits a series that the mapping still records under
+    the old combined entry, which is common for long franchises.
+    """
+    return {
+        str(entry["tvdb_id"])
+        for entry in (mappings or {}).values()
+        if isinstance(entry, dict) and entry.get("tvdb_id")
+    }
+
+
 def extract_shoko_ids(shoko_series, mappings=None):
     """The ID sets alone, for callers that don't need the per-series rows."""
     _, mal_ids, anidb_ids, tvdb_ids = build_shoko_index(shoko_series, mappings)
@@ -503,12 +521,18 @@ def build_season_entries(media_list, mappings, mal_ids, anidb_ids,
     return entries
 
 
-def compare_sonarr(sonarr_series, tvdb_ids, shoko_episodes=None, tolerance=1):
+def compare_sonarr(sonarr_series, tvdb_ids, shoko_episodes=None, tolerance=1,
+                   mapped_tvdb=None):
     """Work out which Sonarr series already exist in Shoko, matched on TVDB.
 
     A series counts as `partial` when Shoko has it but is short of Sonarr's
     file count - a half-finished move, which reads as done on a bare
     migrated/not-migrated split.
+
+    A series counts as `unmappable` when its TVDB ID appears nowhere in the
+    mapping file, so no answer is possible either way - see mapping_tvdb_ids.
+    Pass `mapped_tvdb` to have those separated out; without it every row is
+    treated as answerable, which is what callers predating this expect.
 
     The counts are close but not strictly comparable: Shoko's local episode
     count generally leaves specials out, while Sonarr's includes season 0 when
@@ -539,9 +563,18 @@ def compare_sonarr(sonarr_series, tvdb_ids, shoko_episodes=None, tolerance=1):
             # Zero on Shoko's side isn't a partial move, it's just not migrated
             # - or a version whose episode counts don't read at all.
             partial=bool(migrated and in_shoko and files - in_shoko > tolerance),
+            # Only meaningful for a series that didn't match: one that did is
+            # answered already, however the mapping feels about it.
+            unmappable=bool(
+                mapped_tvdb is not None
+                and not migrated
+                and (not tvdb_id or str(tvdb_id) not in mapped_tvdb)
+            ),
         ))
 
-    log.info("Sonarr comparison: %s series, %s already in Shoko (%s partial)",
+    log.info("Sonarr comparison: %s series, %s already in Shoko "
+             "(%s partial, %s unmappable)",
              len(results), sum(1 for r in results if r.migrated),
-             sum(1 for r in results if r.partial))
+             sum(1 for r in results if r.partial),
+             sum(1 for r in results if r.unmappable))
     return results

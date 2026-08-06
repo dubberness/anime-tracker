@@ -156,7 +156,22 @@ def test_migration_stats_without_shoko_rows_keeps_the_original_shape():
         "total", "migrated", "remaining", "completion",
         "remaining_size_gb", "migrated_size_gb",
         "partial", "partial_missing_episodes",
+        "unmappable", "unmappable_size_gb",
     }
+
+
+def test_unmappable_series_still_count_as_remaining():
+    """The six history keys keep their meaning; the page does the subtracting."""
+    rows = [
+        SonarrEntry("A", 1, "ended", 10, 12, 5.0, False),
+        SonarrEntry("B", 2, "ended", 20, 20, 7.5, False, unmappable=True),
+    ]
+    migration = stats_mod.build_migration_stats(rows)
+
+    assert migration["remaining"] == 2
+    assert migration["remaining_size_gb"] == 12.5
+    assert migration["unmappable"] == 1
+    assert migration["unmappable_size_gb"] == 7.5
 
 
 def test_migration_stats_counts_both_sides():

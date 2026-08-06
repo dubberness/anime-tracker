@@ -13,6 +13,13 @@
 </div>
 {% else %}
 
+{# Derived from the rows rather than the stats block, so a results.json written
+   before either flag existed simply yields empty lists instead of raising. #}
+{% set unmappable_rows = sonarr | rejectattr('migrated') | selectattr('unmappable') | list %}
+{% set remaining = sonarr | rejectattr('migrated') | rejectattr('unmappable') | list %}
+{% set matched = sonarr | selectattr('migrated') | list %}
+{% set partial_rows = sonarr | selectattr('partial') | list %}
+
 {% if data.sonarr_error %}
 <div class="banner banner-warning">
   <span class="banner-icon" aria-hidden="true">&#9888;</span>
@@ -43,11 +50,11 @@
     <div class="hero-meta">
       <div class="tile">
         <span class="label">Left to move</span>
-        <span class="value">{{ migration.remaining }}</span>
+        <span class="value">{{ remaining | length }}</span>
       </div>
       <div class="tile">
         <span class="label">Remaining size</span>
-        <span class="value">{{ migration.remaining_size_gb }} GB</span>
+        <span class="value">{{ remaining | sum(attribute='size_gb') | round(1) }} GB</span>
       </div>
       <div class="tile">
         <span class="label">Shoko shows</span>
@@ -72,11 +79,13 @@
 </section>
 {% endif %}
 
-{% set remaining = sonarr | rejectattr('migrated') | list %}
 <section class="card section" data-filterable>
   <div class="card-head">
     <h2>Still only in Sonarr</h2>
-    <span class="sub">{{ migration.remaining }} series &middot; {{ migration.remaining_size_gb }} GB</span>
+    <span class="sub">
+      {{ remaining | length }} series &middot;
+      {{ remaining | sum(attribute='size_gb') | round(1) }} GB
+    </span>
   </div>
 
   {% if remaining %}
@@ -122,7 +131,67 @@
   {% endif %}
 </section>
 
-{% set partial_rows = sonarr | selectattr('partial') | list %}
+{% if unmappable_rows %}
+<section class="card section" data-filterable>
+  <div class="card-head">
+    <h2>Can't be checked</h2>
+    <span class="sub">
+      {{ unmappable_rows | length }} series &middot;
+      {{ unmappable_rows | sum(attribute='size_gb') | round(1) }} GB
+    </span>
+  </div>
+
+  <p class="note">
+    Sonarr has these under a TVDB ID the mapping file has never heard of, and
+    that mapping is the only bridge to the AniDB IDs Shoko reports &mdash; so
+    whether Shoko has them is genuinely unanswerable, not a no. Usually it means
+    TheTVDB split a series that the mapping still records under the old combined
+    entry, which happens to long franchises. Worth checking by hand before
+    treating any of them as work to do.
+  </p>
+
+  <div class="toolbar">
+    <input class="search" type="text" data-filter-input
+           placeholder="Search titles..." autocomplete="off">
+    <span class="sub" data-filter-count></span>
+  </div>
+
+  <div class="table-wrap" data-table>
+    <table>
+      <thead>
+        <tr>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="text">Status</th>
+          <th scope="col" class="sortable" data-type="num">Episodes</th>
+          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+          <th scope="col">TVDB</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in unmappable_rows | sort(attribute='size_gb', reverse=true) %}
+        <tr>
+          <td class="title">
+            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+               target="_blank" rel="noopener">{{ row.title }}</a>
+          </td>
+          <td>{{ row.status }}</td>
+          <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
+          <td class="num">{{ row.size_gb }}</td>
+          <td>
+            {% if row.tvdb_id %}
+            <span class="pill pill-muted">{{ row.tvdb_id }} not mapped</span>
+            {% else %}
+            <span class="pill pill-muted">No TVDB ID</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 {% if partial_rows %}
 <section class="card section" data-filterable>
   <div class="card-head">
@@ -242,8 +311,7 @@
 </section>
 {% endif %}
 
-{% set matched = sonarr | selectattr('migrated') | list %}
-<section class="card" data-filterable>
+<section class="card section" data-filterable>
   <div class="card-head">
     <h2>Already in both</h2>
     <span class="sub">{{ migration.migrated }} series &middot; {{ migration.migrated_size_gb }} GB</span>

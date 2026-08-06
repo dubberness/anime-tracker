@@ -289,6 +289,7 @@ class Runner:
                 sonarr_results = compare.compare_sonarr(
                     sonarr_series, tvdb_ids,
                     compare.shoko_episodes_by_tvdb(shoko_entries),
+                    mapped_tvdb=compare.mapping_tvdb_ids(mapping_lookup),
                 )
             except Exception as exc:  # noqa: BLE001 - Sonarr is optional
                 sonarr_error = str(exc)
