@@ -422,9 +422,12 @@
       const type = header.dataset.type || "text";
       const asc = header.getAttribute("data-dir") !== "asc";
 
+      // textContent, not innerText: innerText reflects what is laid out, so a
+      // table inside a collapsed <details> reads as empty and sorts into
+      // nonsense. textContent doesn't care whether it's on screen.
       rows.sort((a, b) => {
-        const x = a.cells[index] ? a.cells[index].innerText.trim() : "";
-        const y = b.cells[index] ? b.cells[index].innerText.trim() : "";
+        const x = a.cells[index] ? a.cells[index].textContent.trim() : "";
+        const y = b.cells[index] ? b.cells[index].textContent.trim() : "";
         if (type === "num") {
           const nx = parseFloat(x.replace(/[^0-9.\-]/g, "")) || 0;
           const ny = parseFloat(y.replace(/[^0-9.\-]/g, "")) || 0;
@@ -436,6 +439,24 @@
       rows.forEach(row => tbody.appendChild(row));
       $$("th", table.tHead).forEach(th => th.removeAttribute("data-dir"));
       header.setAttribute("data-dir", asc ? "asc" : "desc");
+    }
+  };
+
+  /* Remembers which <details> sections were left open.
+   *
+   * The markup carries a sensible default, so a browser with storage blocked
+   * still gets a usable page - this only restores a choice already made. */
+  const Collapse = {
+    init(el) {
+      const key = "collapse:" + (el.dataset.collapse || "");
+
+      let saved = null;
+      try { saved = localStorage.getItem(key); } catch (e) { /* private mode */ }
+      if (saved !== null) el.open = saved === "1";
+
+      el.addEventListener("toggle", () => {
+        try { localStorage.setItem(key, el.open ? "1" : "0"); } catch (e) { /* ignore */ }
+      });
     }
   };
 
@@ -459,7 +480,9 @@
         let shown = 0;
 
         rows.forEach(row => {
-          const hit = !term || row.innerText.toLowerCase().includes(term);
+          // textContent for the same reason DataTable uses it - a row in a
+          // collapsed section has no innerText and would never match.
+          const hit = !term || row.textContent.toLowerCase().includes(term);
           row.hidden = !hit;
           if (hit) shown++;
         });
@@ -936,6 +959,7 @@
     Library.init();
     Seasons.init();
 
+    $$("[data-collapse]").forEach(el => Collapse.init(el));
     $$("[data-table]").forEach(el => DataTable.init(el));
     $$("[data-filterable]").forEach(el => TableFilter.init(el));
 
@@ -962,6 +986,14 @@
         resizeTimer = setTimeout(draw, 180);
       });
       window.addEventListener("themechange", draw);
+
+      // A chart drawn inside a closed <details> measures zero width and falls
+      // back to a guess, so it has to be redrawn once the section is actually
+      // on screen and can be measured properly.
+      const panel = host && host.closest("details");
+      if (panel) {
+        panel.addEventListener("toggle", () => { if (panel.open) draw(); });
+      }
     }
 
     const decadeData = $("#decade-data");

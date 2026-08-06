@@ -252,6 +252,42 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 
+/* Collapsible card sections. Built on <details> so the keyboard handling,
+   focus behaviour and screen-reader semantics come from the browser rather
+   than being reimplemented. The summary reuses .card-head so an open panel
+   looks exactly like a plain card. */
+.panel > summary.card-head {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+  user-select: none;
+}
+.panel > summary.card-head::-webkit-details-marker { display: none; }
+
+.panel > summary.card-head::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 7px; height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+.panel[open] > summary.card-head::before { transform: rotate(45deg); }
+
+.panel > summary.card-head:hover h2,
+.panel > summary.card-head:hover::before { color: var(--series-1); }
+.panel > summary.card-head:hover::before { border-color: var(--series-1); }
+
+.panel > summary.card-head:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.panel-body { margin-top: 14px; }
+
 /* Explains what a table means before you read it - the migration page has
    several that need a caveat to be read correctly. */
 .note {

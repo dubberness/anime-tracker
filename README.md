@@ -176,6 +176,11 @@ Sonarr's view alone can't say where a series came from.
 | **Only in Shoko** | Shoko has the only copies. *Not in Sonarr* = Sonarr never had the series; *Monitored* = Sonarr still tracks it with nothing on disk, so the entry is a leftover |
 | **Already in both** | Matched on TVDB ID. Goes on the series existing in Sonarr, not on what it holds, so *Monitored* rows appear here too |
 
+Each section collapses, and starts collapsed — between them these tables run to
+hundreds of rows, and the count beside each heading is usually all you need.
+Whatever you open stays open next visit. Each has its own search box, and the
+column headers sort.
+
 Two caveats worth knowing:
 
 - **Episode counts aren't strictly comparable.** Shoko's local count generally
