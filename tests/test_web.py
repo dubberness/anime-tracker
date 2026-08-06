@@ -207,6 +207,25 @@ def test_migration_page_survives_rows_from_before_the_unmappable_flag(client, ct
     assert "Can't be checked" not in body
 
 
+def test_migration_sections_are_collapsible_and_start_closed(client, ctx):
+    """The tables run to hundreds of rows between them, so the page opens as a
+    set of headings with counts rather than one enormous scroll."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["sonarr_enabled"] = True
+    payload["sonarr"] = [sonarr_row("Some Show", 100)]
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    body = client.get("/migration").data.decode()
+
+    assert 'data-collapse="sonarr-only"' in body
+    assert 'data-collapse="both"' in body
+    # the work list is a <details> and must not carry `open`
+    section = body[body.index('data-collapse="sonarr-only"'):]
+    assert section[:section.index(">")].strip().endswith('"')
+
+
 def test_migration_page_lists_what_is_only_in_shoko(client, ctx):
     configure(ctx)
     payload = seed_results(ctx)

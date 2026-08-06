@@ -20,6 +20,12 @@
 {% set matched = sonarr | selectattr('migrated') | list %}
 {% set partial_rows = sonarr | selectattr('partial') | list %}
 
+{# Sections are <details> so collapsing costs no JS and keeps the keyboard and
+   screen-reader behaviour the browser already provides. Everything starts
+   closed except the chart: between them these tables run to hundreds of rows,
+   and the counts in each summary are enough to decide which one you want.
+   Whatever is opened stays open on the next visit. #}
+
 {% if data.sonarr_error %}
 <div class="banner banner-warning">
   <span class="banner-icon" aria-hidden="true">&#9888;</span>
@@ -70,288 +76,312 @@
 
 {% if trend %}
 <section class="card section">
-  <div class="card-head">
-    <h2>Migration over time</h2>
-    <span class="sub">last {{ trend|length }} run{{ '' if trend|length == 1 else 's' }}</span>
-  </div>
-  <div class="chart" id="trend-chart" data-unit="% in Shoko"></div>
-  <script type="application/json" id="trend-data">{{ trend|tojson }}</script>
+  <details class="panel" data-collapse="trend" open>
+    <summary class="card-head">
+      <h2>Migration over time</h2>
+      <span class="sub">last {{ trend|length }} run{{ '' if trend|length == 1 else 's' }}</span>
+    </summary>
+    <div class="panel-body">
+      <div class="chart" id="trend-chart" data-unit="% in Shoko"></div>
+      <script type="application/json" id="trend-data">{{ trend|tojson }}</script>
+    </div>
+  </details>
 </section>
 {% endif %}
 
 <section class="card section" data-filterable>
-  <div class="card-head">
-    <h2>Still only in Sonarr</h2>
-    <span class="sub">
-      {{ remaining | length }} series &middot;
-      {{ remaining | sum(attribute='size_gb') | round(1) }} GB
-    </span>
-  </div>
+  <details class="panel" data-collapse="sonarr-only">
+    <summary class="card-head">
+      <h2>Still only in Sonarr</h2>
+      <span class="sub">
+        {{ remaining | length }} series &middot;
+        {{ remaining | sum(attribute='size_gb') | round(1) }} GB
+      </span>
+    </summary>
 
-  {% if remaining %}
-  <div class="toolbar">
-    <input class="search" type="text" data-filter-input
-           placeholder="Search titles..." autocomplete="off">
-    <span class="sub" data-filter-count></span>
-  </div>
+    <div class="panel-body">
+      {% if remaining %}
+      <div class="toolbar">
+        <input class="search" type="text" data-filter-input
+               placeholder="Search titles..." autocomplete="off">
+        <span class="sub" data-filter-count></span>
+      </div>
 
-  <div class="table-wrap" data-table>
-    <table>
-      <thead>
-        <tr>
-          <th scope="col" class="sortable" data-type="text">Title</th>
-          <th scope="col" class="sortable" data-type="text">Status</th>
-          <th scope="col" class="sortable" data-type="num">Episodes</th>
-          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
-          <th scope="col">Download</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in remaining | sort(attribute='size_gb', reverse=true) %}
-        <tr>
-          <td class="title">
-            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
-               target="_blank" rel="noopener">{{ row.title }}</a>
-          </td>
-          <td>{{ row.status }}</td>
-          <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
-          <td class="num">{{ row.size_gb }}</td>
-          <td>
-            <a class="sub-link"
-               href="https://nyaa.si/?f=0&amp;c=0_0&amp;q={{ row.title | urlencode }}&amp;s=seeders&amp;o=desc"
-               target="_blank" rel="noopener">Search</a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="empty-state">Migration complete - nothing left in Sonarr that isn't already in Shoko.</p>
-  {% endif %}
+      <div class="table-wrap" data-table>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable" data-type="text">Title</th>
+              <th scope="col" class="sortable" data-type="text">Status</th>
+              <th scope="col" class="sortable" data-type="num">Episodes</th>
+              <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+              <th scope="col">Download</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in remaining | sort(attribute='size_gb', reverse=true) %}
+            <tr>
+              <td class="title">
+                <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+                   target="_blank" rel="noopener">{{ row.title }}</a>
+              </td>
+              <td>{{ row.status }}</td>
+              <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
+              <td class="num">{{ row.size_gb }}</td>
+              <td>
+                <a class="sub-link"
+                   href="https://nyaa.si/?f=0&amp;c=0_0&amp;q={{ row.title | urlencode }}&amp;s=seeders&amp;o=desc"
+                   target="_blank" rel="noopener">Search</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty-state">Migration complete - nothing left in Sonarr that isn't already in Shoko.</p>
+      {% endif %}
+    </div>
+  </details>
 </section>
 
 {% if unmappable_rows %}
 <section class="card section" data-filterable>
-  <div class="card-head">
-    <h2>Can't be checked</h2>
-    <span class="sub">
-      {{ unmappable_rows | length }} series &middot;
-      {{ unmappable_rows | sum(attribute='size_gb') | round(1) }} GB
-    </span>
-  </div>
+  <details class="panel" data-collapse="unmappable">
+    <summary class="card-head">
+      <h2>Can't be checked</h2>
+      <span class="sub">
+        {{ unmappable_rows | length }} series &middot;
+        {{ unmappable_rows | sum(attribute='size_gb') | round(1) }} GB
+      </span>
+    </summary>
 
-  <p class="note">
-    Sonarr has these under a TVDB ID the mapping file has never heard of, and
-    that mapping is the only bridge to the AniDB IDs Shoko reports &mdash; so
-    whether Shoko has them is genuinely unanswerable, not a no. Usually it means
-    TheTVDB split a series that the mapping still records under the old combined
-    entry, which happens to long franchises. Worth checking by hand before
-    treating any of them as work to do.
-  </p>
+    <div class="panel-body">
+      <p class="note">
+        Sonarr has these under a TVDB ID the mapping file has never heard of, and
+        that mapping is the only bridge to the AniDB IDs Shoko reports &mdash; so
+        whether Shoko has them is genuinely unanswerable, not a no. Usually it means
+        TheTVDB split a series that the mapping still records under the old combined
+        entry, which happens to long franchises. Worth checking by hand before
+        treating any of them as work to do.
+      </p>
 
-  <div class="toolbar">
-    <input class="search" type="text" data-filter-input
-           placeholder="Search titles..." autocomplete="off">
-    <span class="sub" data-filter-count></span>
-  </div>
+      <div class="toolbar">
+        <input class="search" type="text" data-filter-input
+               placeholder="Search titles..." autocomplete="off">
+        <span class="sub" data-filter-count></span>
+      </div>
 
-  <div class="table-wrap" data-table>
-    <table>
-      <thead>
-        <tr>
-          <th scope="col" class="sortable" data-type="text">Title</th>
-          <th scope="col" class="sortable" data-type="text">Status</th>
-          <th scope="col" class="sortable" data-type="num">Episodes</th>
-          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
-          <th scope="col">TVDB</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in unmappable_rows | sort(attribute='size_gb', reverse=true) %}
-        <tr>
-          <td class="title">
-            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
-               target="_blank" rel="noopener">{{ row.title }}</a>
-          </td>
-          <td>{{ row.status }}</td>
-          <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
-          <td class="num">{{ row.size_gb }}</td>
-          <td>
-            {% if row.tvdb_id %}
-            <span class="pill pill-muted">{{ row.tvdb_id }} not mapped</span>
-            {% else %}
-            <span class="pill pill-muted">No TVDB ID</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      <div class="table-wrap" data-table>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable" data-type="text">Title</th>
+              <th scope="col" class="sortable" data-type="text">Status</th>
+              <th scope="col" class="sortable" data-type="num">Episodes</th>
+              <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+              <th scope="col">TVDB</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in unmappable_rows | sort(attribute='size_gb', reverse=true) %}
+            <tr>
+              <td class="title">
+                <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+                   target="_blank" rel="noopener">{{ row.title }}</a>
+              </td>
+              <td>{{ row.status }}</td>
+              <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
+              <td class="num">{{ row.size_gb }}</td>
+              <td>
+                {% if row.tvdb_id %}
+                <span class="pill pill-muted">{{ row.tvdb_id }} not mapped</span>
+                {% else %}
+                <span class="pill pill-muted">No TVDB ID</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
 </section>
 {% endif %}
 
 {% if partial_rows %}
 <section class="card section" data-filterable>
-  <div class="card-head">
-    <h2>Moved, but short</h2>
-    <span class="sub">
-      {{ partial_rows|length }} series &middot;
-      {{ migration.partial_missing_episodes }} episodes behind
-    </span>
-  </div>
+  <details class="panel" data-collapse="partial">
+    <summary class="card-head">
+      <h2>Moved, but short</h2>
+      <span class="sub">
+        {{ partial_rows|length }} series &middot;
+        {{ migration.partial_missing_episodes }} episodes behind
+      </span>
+    </summary>
 
-  <p class="note">
-    In both libraries, but Shoko holds fewer episodes than Sonarr does - usually a
-    half-finished move. Shoko generally doesn't count specials while Sonarr does,
-    so a gap of one or two is often nothing. Both raw counts are shown rather than
-    a verdict.
-  </p>
+    <div class="panel-body">
+      <p class="note">
+        In both libraries, but Shoko holds fewer episodes than Sonarr does - usually a
+        half-finished move. Shoko generally doesn't count specials while Sonarr does,
+        so a gap of one or two is often nothing. Both raw counts are shown rather than
+        a verdict.
+      </p>
 
-  <div class="toolbar">
-    <input class="search" type="text" data-filter-input
-           placeholder="Search titles..." autocomplete="off">
-    <span class="sub" data-filter-count></span>
-  </div>
+      <div class="toolbar">
+        <input class="search" type="text" data-filter-input
+               placeholder="Search titles..." autocomplete="off">
+        <span class="sub" data-filter-count></span>
+      </div>
 
-  <div class="table-wrap" data-table>
-    <table>
-      <thead>
-        <tr>
-          <th scope="col" class="sortable" data-type="text">Title</th>
-          <th scope="col" class="sortable" data-type="num">In Sonarr</th>
-          <th scope="col" class="sortable" data-type="num">In Shoko</th>
-          <th scope="col" class="sortable" data-type="num">Behind</th>
-          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in partial_rows | sort(attribute='episode_file_count', reverse=true) %}
-        <tr>
-          <td class="title">
-            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
-               target="_blank" rel="noopener">{{ row.title }}</a>
-          </td>
-          <td class="num">{{ row.episode_file_count }}</td>
-          <td class="num">{{ row.shoko_episodes }}</td>
-          <td class="num">{{ row.episode_file_count - row.shoko_episodes }}</td>
-          <td class="num">{{ row.size_gb }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      <div class="table-wrap" data-table>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable" data-type="text">Title</th>
+              <th scope="col" class="sortable" data-type="num">In Sonarr</th>
+              <th scope="col" class="sortable" data-type="num">In Shoko</th>
+              <th scope="col" class="sortable" data-type="num">Behind</th>
+              <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in partial_rows | sort(attribute='episode_file_count', reverse=true) %}
+            <tr>
+              <td class="title">
+                <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+                   target="_blank" rel="noopener">{{ row.title }}</a>
+              </td>
+              <td class="num">{{ row.episode_file_count }}</td>
+              <td class="num">{{ row.shoko_episodes }}</td>
+              <td class="num">{{ row.episode_file_count - row.shoko_episodes }}</td>
+              <td class="num">{{ row.size_gb }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
 </section>
 {% endif %}
 
 {% if shoko %}
 <section class="card section" data-filterable>
-  <div class="card-head">
-    <h2>Only in Shoko</h2>
-    <span class="sub">
-      {{ shoko|length }} series &middot; {{ migration.shoko_only_episodes }} episodes
-    </span>
-  </div>
+  <details class="panel" data-collapse="shoko-only">
+    <summary class="card-head">
+      <h2>Only in Shoko</h2>
+      <span class="sub">
+        {{ shoko|length }} series &middot; {{ migration.shoko_only_episodes }} episodes
+      </span>
+    </summary>
 
-  <p class="note">
-    Shoko holds the only copies of these. <strong>Not in Sonarr</strong> means
-    Sonarr never had the series - moved and cleaned up, or picked up fresh.
-    <strong>Monitored</strong> means Sonarr still tracks it but has nothing on
-    disk, so the move is done and the Sonarr entry is just a leftover; those also
-    appear under &ldquo;already in both&rdquo;, which goes on the series existing
-    in Sonarr rather than on what it holds.
-    {% if migration.shoko_unmapped %}
-    A further {{ migration.shoko_unmapped }} Shoko series have no TVDB ID at all -
-    mostly movies and OVAs, plus anything the mapping file hasn't caught up with -
-    so they can't be checked against Sonarr either way.
-    {% endif %}
-  </p>
+    <div class="panel-body">
+      <p class="note">
+        Shoko holds the only copies of these. <strong>Not in Sonarr</strong> means
+        Sonarr never had the series - moved and cleaned up, or picked up fresh.
+        <strong>Monitored</strong> means Sonarr still tracks it but has nothing on
+        disk, so the move is done and the Sonarr entry is just a leftover; those also
+        appear under &ldquo;already in both&rdquo;, which goes on the series existing
+        in Sonarr rather than on what it holds.
+        {% if migration.shoko_unmapped %}
+        A further {{ migration.shoko_unmapped }} Shoko series have no TVDB ID at all -
+        mostly movies and OVAs, plus anything the mapping file hasn't caught up with -
+        so they can't be checked against Sonarr either way.
+        {% endif %}
+      </p>
 
-  <div class="toolbar">
-    <input class="search" type="text" data-filter-input
-           placeholder="Search titles..." autocomplete="off">
-    <span class="sub" data-filter-count></span>
-  </div>
+      <div class="toolbar">
+        <input class="search" type="text" data-filter-input
+               placeholder="Search titles..." autocomplete="off">
+        <span class="sub" data-filter-count></span>
+      </div>
 
-  <div class="table-wrap" data-table>
-    <table>
-      <thead>
-        <tr>
-          <th scope="col" class="sortable" data-type="text">Title</th>
-          <th scope="col" class="sortable" data-type="num">Episodes</th>
-          <th scope="col" class="sortable" data-type="text">Sonarr</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in shoko | sort(attribute='episodes', reverse=true) %}
-        <tr>
-          <td class="title">
-            {% if row.anidb_id %}
-            <a href="https://anidb.net/anime/{{ row.anidb_id }}"
-               target="_blank" rel="noopener">{{ row.title }}</a>
-            {% else %}
-            {{ row.title }}
-            {% endif %}
-          </td>
-          <td class="num">{{ row.episodes }}</td>
-          <td>
-            {% if row.sonarr_status == 'wanted' %}
-            <span class="pill pill-warn"
-                  title="Sonarr has the series but no episode files for it">Monitored</span>
-            {% else %}
-            <span class="pill pill-muted">Not in Sonarr</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      <div class="table-wrap" data-table>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable" data-type="text">Title</th>
+              <th scope="col" class="sortable" data-type="num">Episodes</th>
+              <th scope="col" class="sortable" data-type="text">Sonarr</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in shoko | sort(attribute='episodes', reverse=true) %}
+            <tr>
+              <td class="title">
+                {% if row.anidb_id %}
+                <a href="https://anidb.net/anime/{{ row.anidb_id }}"
+                   target="_blank" rel="noopener">{{ row.title }}</a>
+                {% else %}
+                {{ row.title }}
+                {% endif %}
+              </td>
+              <td class="num">{{ row.episodes }}</td>
+              <td>
+                {% if row.sonarr_status == 'wanted' %}
+                <span class="pill pill-warn"
+                      title="Sonarr has the series but no episode files for it">Monitored</span>
+                {% else %}
+                <span class="pill pill-muted">Not in Sonarr</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
 </section>
 {% endif %}
 
 <section class="card section" data-filterable>
-  <div class="card-head">
-    <h2>Already in both</h2>
-    <span class="sub">{{ migration.migrated }} series &middot; {{ migration.migrated_size_gb }} GB</span>
-  </div>
+  <details class="panel" data-collapse="both">
+    <summary class="card-head">
+      <h2>Already in both</h2>
+      <span class="sub">{{ migration.migrated }} series &middot; {{ migration.migrated_size_gb }} GB</span>
+    </summary>
 
-  {% if matched %}
-  <div class="toolbar">
-    <input class="search" type="text" data-filter-input
-           placeholder="Search titles..." autocomplete="off">
-    <span class="sub" data-filter-count></span>
-  </div>
+    <div class="panel-body">
+      {% if matched %}
+      <div class="toolbar">
+        <input class="search" type="text" data-filter-input
+               placeholder="Search titles..." autocomplete="off">
+        <span class="sub" data-filter-count></span>
+      </div>
 
-  <div class="table-wrap" data-table>
-    <table>
-      <thead>
-        <tr>
-          <th scope="col" class="sortable" data-type="text">Title</th>
-          <th scope="col" class="sortable" data-type="text">Status</th>
-          <th scope="col" class="sortable" data-type="num">Episodes</th>
-          <th scope="col" class="sortable" data-type="num">Size (GB)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in matched | sort(attribute='title') %}
-        <tr>
-          <td class="title">
-            <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
-               target="_blank" rel="noopener">{{ row.title }}</a>
-          </td>
-          <td>{{ row.status }}</td>
-          <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
-          <td class="num">{{ row.size_gb }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="empty-state">Nothing matched yet.</p>
-  {% endif %}
+      <div class="table-wrap" data-table>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="sortable" data-type="text">Title</th>
+              <th scope="col" class="sortable" data-type="text">Status</th>
+              <th scope="col" class="sortable" data-type="num">Episodes</th>
+              <th scope="col" class="sortable" data-type="num">Size (GB)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in matched | sort(attribute='title') %}
+            <tr>
+              <td class="title">
+                <a href="https://www.thetvdb.com/?tab=series&amp;id={{ row.tvdb_id }}"
+                   target="_blank" rel="noopener">{{ row.title }}</a>
+              </td>
+              <td>{{ row.status }}</td>
+              <td class="num">{{ row.episode_file_count }}/{{ row.episode_count }}</td>
+              <td class="num">{{ row.size_gb }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty-state">Nothing matched yet.</p>
+      {% endif %}
+    </div>
+  </details>
 </section>
 
 {% endif %}
