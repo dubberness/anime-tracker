@@ -73,13 +73,23 @@
     unknown:  '<span class="pill pill-muted">&mdash;</span>'
   };
 
-  /* Mirrors core.compare.is_complete. Falling back to plain ownership when the
-     aired count is missing is what keeps results.json files written before the
-     episode counts existed rendering exactly as they used to. */
+  /* Mirrors core.compare.is_complete: Shoko has every episode that has *aired*.
+     Falling back to plain ownership when the aired count is missing is what
+     keeps results.json files written before the episode counts existed
+     rendering exactly as they used to. */
   function isComplete(entry) {
     if (!entry.owned) return false;
     if (entry.episodes_aired == null) return true;
     return (entry.episodes_local || 0) >= entry.episodes_aired;
+  }
+
+  /* Mirrors core.autobrr.STILL_COMING / is_done. Being caught up on a weekly
+     show is not the same as being finished with it, and treating them as one
+     hid the Track button on an airing show the week before its next episode. */
+  const STILL_COMING = ["RELEASING", "NOT_YET_RELEASED", "HIATUS"];
+
+  function isDone(entry) {
+    return isComplete(entry) && STILL_COMING.indexOf(entry.status || "") === -1;
   }
 
   /* "5 of 12" with a thin progress bar. The total falls back to the announced
@@ -107,7 +117,7 @@
      a split-cour sequel maps to the same MAL ID as part one, so the old
      owned-means-dash rule made exactly those impossible to track by hand. */
   function autobrrCell(entry, mode) {
-    if (isComplete(entry)) {
+    if (isDone(entry)) {
       return '<td><span class="pill pill-good">&#10003; Complete</span></td>';
     }
     if (mode === "readonly") {
@@ -741,7 +751,7 @@
 
     matches(entry) {
       switch (this.filter) {
-        case "untracked":  return !isComplete(entry) && !entry.autobrr_tracked;
+        case "untracked":  return !isDone(entry) && !entry.autobrr_tracked;
         case "tracked":    return !!entry.autobrr_tracked;
         case "sequel":     return !!entry.sequel_of_owned;
         case "carryover":  return this.isCarryover(entry);
@@ -815,7 +825,7 @@
       const summary = $("#airing-summary");
       if (summary) {
         const untracked = this.entries.filter(
-          e => !e.is_long_runner && !isComplete(e) && !e.autobrr_tracked
+          e => !e.is_long_runner && !isDone(e) && !e.autobrr_tracked
         ).length;
         summary.textContent =
           `${this.filtered.length} showing · ${untracked} not tracked`;

@@ -21,6 +21,11 @@ NOT_YET_RELEASED = "NOT_YET_RELEASED"
 CANCELLED = "CANCELLED"
 HIATUS = "HIATUS"
 
+# States where more episodes are still to come. An unrecognised or missing
+# status is deliberately not in here: results from before this field was
+# recorded should behave as they used to.
+STILL_COMING = (RELEASING, NOT_YET_RELEASED, HIATUS)
+
 # How long a finished-but-incomplete show stays on the list. See the comment on
 # AutobrrSettings.finished_grace_days for why this is not zero.
 FINISHED_GRACE_DAYS = 14
@@ -28,6 +33,20 @@ FINISHED_GRACE_DAYS = 14
 # A row that has never been matched to any AniList media this long after being
 # added is not going to be. Only ever applied when AniList actually answered.
 UNKNOWN_STALE_DAYS = 120
+
+
+def is_done(entry):
+    """Whether there is genuinely nothing left for autobrr to grab.
+
+    Not the same thing as compare.is_complete, and conflating the two is what
+    made a caught-up airing show untrackable: "Shoko has every episode that has
+    aired" is true of a weekly show the morning after each episode lands, but
+    next week's is exactly what autobrr is for.
+
+    Done means complete *and* nothing more coming. A show still releasing is
+    never done, however up to date the library is.
+    """
+    return compare.is_complete(entry) and entry.get("status") not in STILL_COMING
 
 
 def is_now_owned(row, mal_ids, anidb_ids):
@@ -202,11 +221,12 @@ def _seed_source(entries, excluded, airing_only):
     for entry in entries or []:
         if entry.get("anilist_id") in excluded:
             continue
-        # A show Shoko has *in full* is done. Owning an earlier cour is not:
-        # a split-cour sequel is a separate AniList entry that the mapping
-        # file points at part one's MAL ID, so ownership alone would skip
-        # exactly the shows most worth grabbing.
-        if compare.is_complete(entry):
+        # Only a show with nothing left to come is skipped. Owning an earlier
+        # cour is not a reason - a split-cour sequel is a separate AniList
+        # entry that the mapping file points at part one's MAL ID - and
+        # neither is being caught up on a show that is still airing, which
+        # would drop it from the list the week before its next episode.
+        if is_done(entry):
             continue
         # Auto-tracking One Piece means autobrr chasing eleven hundred
         # episodes. Still trackable by hand, just never automatically.

@@ -105,12 +105,65 @@ def test_auto_seed_keeps_a_show_shoko_only_partly_has():
     )) == [1]
 
 
-def test_auto_seed_skips_a_show_shoko_has_complete():
+def test_auto_seed_keeps_a_caught_up_show_that_is_still_airing():
+    """Caught up is not finished.
+
+    Shoko having all 17 aired episodes of a weekly show says nothing about
+    episode 18 next week - which is the whole reason autobrr is watching. This
+    is the state Slime and Re:Zero were in when they silently fell off the
+    list: complete by the aired count, still releasing, never seeded.
+    """
     assert ids(autobrr.auto_seed_candidates(
-        [entry(1, owned=True, episodes_aired=6, episodes_local=6),
+        [entry(1, owned=True, episodes_aired=17, episodes_local=17,
+               status="RELEASING")],
+        limit=10,
+    )) == [1]
+
+
+def test_auto_seed_skips_a_finished_show_shoko_has_complete():
+    assert ids(autobrr.auto_seed_candidates(
+        [entry(1, owned=True, episodes_aired=6, episodes_local=6,
+               status="FINISHED"),
          entry(2), entry(3)],
         limit=2,
     )) == [2, 3]
+
+
+def test_auto_seed_skips_a_complete_show_with_no_status():
+    """Pre-4.3 payloads carry no status - they must behave as they used to."""
+    assert ids(autobrr.auto_seed_candidates(
+        [entry(1, owned=True, episodes_aired=6, episodes_local=6, status=""),
+         entry(2)],
+        limit=2,
+    )) == [2]
+
+
+# -- done vs caught up --
+
+def test_a_caught_up_airing_show_is_not_done():
+    assert autobrr.is_done({
+        "owned": True, "episodes_aired": 17, "episodes_local": 17,
+        "status": "RELEASING",
+    }) is False
+
+
+def test_a_caught_up_finished_show_is_done():
+    assert autobrr.is_done({
+        "owned": True, "episodes_aired": 12, "episodes_local": 12,
+        "status": "FINISHED",
+    }) is True
+
+
+def test_a_show_on_break_between_cours_is_not_done():
+    """No aired count while on hiatus, so is_complete falls back to owned."""
+    assert autobrr.is_done({"owned": True, "status": "HIATUS"}) is False
+
+
+def test_an_incomplete_show_is_never_done():
+    assert autobrr.is_done({
+        "owned": True, "episodes_aired": 12, "episodes_local": 3,
+        "status": "FINISHED",
+    }) is False
 
 
 def test_auto_seed_skips_shows_that_are_not_airing():
@@ -198,13 +251,26 @@ def test_a_show_in_both_sources_is_only_seeded_once():
     )) == [1, 2, 9]
 
 
-def test_owned_and_excluded_are_honoured_in_the_upcoming_block_too():
+def test_exclusions_are_honoured_in_the_upcoming_block_too():
     assert ids(autobrr.auto_seed_candidates(
         [entry(1)],
-        upcoming([entry(8, owned=True), entry(9), entry(10)]),
+        upcoming([entry(9, status="NOT_YET_RELEASED"),
+                  entry(10, status="NOT_YET_RELEASED")]),
         excluded_ids={9},
         limit=10,
     )) == [1, 10]
+
+
+def test_an_upcoming_show_reading_as_owned_is_still_seeded():
+    """Almost always a next season mapped onto part one's MAL ID.
+
+    Nothing has aired yet, so "owned" here means the mapping resolved to an
+    earlier season Shoko has - which is the strongest possible reason to want
+    the new one, not a reason to skip it.
+    """
+    assert ids(autobrr.auto_seed_candidates(
+        [], upcoming([entry(8, owned=True, status="NOT_YET_RELEASED")]), limit=10
+    )) == [8]
 
 
 def test_the_current_season_block_is_not_a_seed_source():
