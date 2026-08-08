@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if not data.airing %}
+<section class="card">
+  <p class="empty-state">
+    No airing data yet - it is collected on the next run.
+  </p>
+</section>
+{% else %}
+
+{% if not airing.available %}
+<div class="banner banner-warning">
+  <span class="banner-icon" aria-hidden="true">&#9888;</span>
+  <div>
+    <strong>AniList couldn't be reached on the last run.</strong>
+    Nothing was untracked and nothing was auto-tracked - the autobrr list is
+    exactly as it was. This page fills in again on the next successful run.
+  </div>
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="toolbar">
+    <input class="search" type="text" id="airing-search"
+           placeholder="Search titles..." autocomplete="off">
+
+    <div class="seg" id="airing-filters">
+      <button data-filter="all" class="is-active">All</button>
+      <button data-filter="untracked">Not tracked</button>
+      <button data-filter="sequel">Sequel of owned</button>
+      <button data-filter="carryover">Carryover</button>
+      <button data-filter="incomplete">Incomplete</button>
+      <button data-filter="tracked">Tracked</button>
+    </div>
+
+    <label class="hint" style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="airing-long-runners"> Show long-runners
+    </label>
+
+    <span class="spacer"></span>
+    <span class="meter-value" id="airing-summary"></span>
+  </div>
+
+  <div class="table-wrap" data-table>
+    <table id="airing-table" data-sonarr="{{ '1' if data.sonarr_enabled else '' }}">
+      <thead>
+        <tr>
+          <th scope="col">Cover</th>
+          <th scope="col" class="sortable" data-type="num">#</th>
+          <th scope="col" class="sortable" data-type="text">Title</th>
+          <th scope="col" class="sortable" data-type="num">Score</th>
+          <th scope="col" class="sortable" data-type="num">Popularity</th>
+          <th scope="col" class="sortable" data-type="num">Episodes</th>
+          <th scope="col" class="sortable" data-type="text">Shoko</th>
+          {% if data.sonarr_enabled %}
+          <th scope="col" class="sortable" data-type="text">Sonarr</th>
+          {% endif %}
+          <th scope="col">Autobrr</th>
+        </tr>
+      </thead>
+      <tbody id="airing-body">
+        <tr><td colspan="9"><p class="empty-state">Loading...</p></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="hint" style="margin-top:14px">
+    Everything AniList currently lists as airing, whichever season it started
+    in. The seasonal charts can't answer this on their own: a two-cour show
+    keeps its start season, so it vanishes from the chart halfway through its
+    run while still going out weekly.
+  </p>
+
+  <p class="hint">
+    The top {{ settings.autobrr.auto_seed_limit }} airing shows Shoko doesn't
+    have in full are tracked for autobrr automatically; track anything else by
+    hand. A show stays tracked while it is still airing even once Shoko has
+    part of it, and drops off
+    {% if settings.autobrr.finished_grace_days %}
+      {{ settings.autobrr.finished_grace_days }} days after it finishes
+    {% else %}
+      as soon as it finishes
+    {% endif %}
+    or as soon as the collection is complete.
+    <strong>{{ tracked_count }}</strong> tracked right now &mdash; see the
+    <a href="{{ url_for('settings_page') }}">settings page</a> for the list URL
+    to give autobrr.
+  </p>
+</section>
+
+<script type="application/json" id="airing-data">{{
+  {"entries": entries, "current_season": current_season} | tojson
+}}</script>
+
+{% endif %}
+
+{% endblock %}

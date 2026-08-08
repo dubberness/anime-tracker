@@ -1,7 +1,8 @@
 """Flask application: pages, JSON API and the settings form."""
 
 import os
-from datetime import datetime
+import threading
+from datetime import date, datetime
 
 from flask import (
     Flask,
@@ -24,10 +25,49 @@ from clients import (
 )
 from clients import mappings as mapping_client
 from core import autobrr as autobrr_mod
+from core import compare
+from core import seasons as season_mod
 from logging_setup import get_logger
 from version import VERSION, version_string
 
 log = get_logger(__name__)
+
+# Browsed seasons, keyed (season, year). The picker is an unauthenticated LAN
+# endpoint and clicking back through a decade is dozens of requests in under a
+# minute, against AniList's 90-per-minute ceiling. Past seasons never change,
+# so a long TTL costs nothing.
+SEASON_CACHE_TTL_SECONDS = 900
+SEASON_CACHE_MAX = 24
+
+_season_cache = {}
+_season_cache_lock = threading.Lock()
+
+
+def _season_cache_get(season, year, allow_stale=False):
+    """A cached season, or None. `allow_stale` ignores the TTL.
+
+    Serving stale on a fetch failure is deliberate: an AniList blip should not
+    blank a season the user was just looking at.
+    """
+    with _season_cache_lock:
+        hit = _season_cache.get((season, year))
+        if hit is None:
+            return None
+
+        fetched_at, payload = hit
+        age = (datetime.now() - fetched_at).total_seconds()
+        if allow_stale or age < SEASON_CACHE_TTL_SECONDS:
+            return payload
+        return None
+
+
+def _season_cache_put(season, year, payload):
+    with _season_cache_lock:
+        _season_cache[(season, year)] = (datetime.now(), payload)
+
+        while len(_season_cache) > SEASON_CACHE_MAX:
+            oldest = min(_season_cache, key=lambda key: _season_cache[key][0])
+            del _season_cache[oldest]
 
 
 def create_app(ctx):
@@ -139,6 +179,38 @@ def _register_pages(app, ctx):
             status=ctx.state.snapshot(),
         )
 
+    @app.route("/airing")
+    def airing_page():
+        """What is going out right now, and whether autobrr knows about it.
+
+        Separate from Seasons because AniList tags media with its *start*
+        season: a two-cour show carries on airing long after it has dropped off
+        the current season's chart, which is exactly how an episode gets
+        missed.
+        """
+        results = ctx.runner.results
+        if not results:
+            return render_template("empty.html", status=ctx.state.snapshot(),
+                                   title="Airing")
+
+        airing = results.get("airing") or {}
+        tracked_ids = ctx.storage.autobrr_tracked_ids()
+        entries = [
+            dict(entry, autobrr_tracked=entry["anilist_id"] in tracked_ids)
+            for entry in airing.get("entries") or []
+        ]
+
+        return render_template(
+            "airing.html",
+            title="Airing",
+            data=results,
+            airing=airing,
+            entries=entries,
+            current_season=results.get("current_season") or {},
+            tracked_count=len(tracked_ids),
+            status=ctx.state.snapshot(),
+        )
+
     @app.route("/migration")
     def migration():
         results = ctx.runner.results
@@ -238,6 +310,7 @@ def _auto_seed_ids(ctx):
     results = ctx.runner.results or {}
 
     candidates = autobrr_mod.auto_seed_candidates(
+        autobrr_mod.airing_entries(results),
         results.get("seasons") or [],
         ctx.storage.autobrr_excluded_ids(),
         ctx.config.settings.autobrr.auto_seed_limit,
@@ -451,6 +524,95 @@ def _register_api(app, ctx):
             },
             "episodes": episodes,
             "episodes_suspect": suspect,
+        })
+
+    @app.route("/api/season/<int:year>/<season>")
+    def api_season(year, season):
+        """One season's charts, fetched on demand for the season picker.
+
+        Past seasons are read-only and the response says so, but that is
+        enforced by the page not drawing the buttons rather than by gating
+        /api/autobrr/track: that endpoint stays generic so a show too obscure
+        to appear in any fetch can still be tracked by hand.
+        """
+        # Validated before any client is constructed, so a bad request never
+        # reaches the network - which is also what keeps these paths testable
+        # without mocking AniList.
+        if not season_mod.is_valid(season):
+            return jsonify({
+                "ok": False,
+                "error": f"'{season}' is not a season - expected one of "
+                         f"{', '.join(s.title() for s in season_mod.SEASONS)}",
+            }), 400
+
+        season = season.upper()
+        today = date.today()
+
+        if not 1940 <= year <= today.year + 2:
+            return jsonify({
+                "ok": False,
+                "error": f"Year must be between 1940 and {today.year + 2}",
+            }), 400
+
+        settings = ctx.config.settings
+        # fetch_season's per_page bypasses config.validate, which only bounds
+        # ui.season_limit, and AniList rejects anything over 50.
+        per_page = max(1, min(settings.ui.season_limit, 50))
+
+        cached = _season_cache_get(season, year)
+        if cached is None:
+            try:
+                client = AniListClient(
+                    settings.anilist, ctx.runtime.cache_file, settings.network
+                )
+                cached = client.fetch_season(season, year, per_page=per_page)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                stale = _season_cache_get(season, year, allow_stale=True)
+                if stale is None:
+                    return jsonify({"ok": False, "error": describe_error(exc)}), 502
+                cached = stale
+            else:
+                _season_cache_put(season, year, cached)
+
+        lookups = ctx.runner.lookups
+        tracked_ids = ctx.storage.autobrr_tracked_ids()
+
+        sorts = {}
+        for key, media in cached.items():
+            entries = compare.build_season_entries(
+                media,
+                lookups.mappings if lookups else {},
+                lookups.mal_ids if lookups else set(),
+                lookups.anidb_ids if lookups else set(),
+                lookups.sonarr_index if lookups else {},
+                lookups.sonarr_available if lookups else False,
+                per_page,
+                local_by_mal=lookups.local_by_mal if lookups else None,
+                local_by_anidb=lookups.local_by_anidb if lookups else None,
+            )
+            if lookups:
+                compare.annotate_sequels(
+                    entries, lookups.mappings, lookups.mal_ids, lookups.anidb_ids
+                )
+
+            sorts[key] = [
+                dict(entry.to_dict(),
+                     autobrr_tracked=entry.anilist_id in tracked_ids)
+                for entry in entries
+            ]
+
+        return jsonify({
+            "ok": True,
+            "season": season,
+            "year": year,
+            "label": season_mod.label(season, year),
+            "sorts": sorts,
+            # False before the first run: the page then shows a dash rather
+            # than claiming everything is missing from a library it never read.
+            "ownership_known": lookups is not None,
+            "trackable": (season_mod.index(season, year)
+                          >= season_mod.index(season_mod.season_of(today),
+                                              today.year)),
         })
 
     @app.route("/api/autobrr/list")

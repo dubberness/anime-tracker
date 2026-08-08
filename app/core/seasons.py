@@ -29,3 +29,13 @@ def window(today, before=1, after=1):
 
 def label(season, year):
     return f"{season.title()} {year}"
+
+
+def index(season, year):
+    """A sortable ordinal, so past/current/future is plain arithmetic."""
+    return year * len(SEASONS) + SEASONS.index(season)
+
+
+def is_valid(season):
+    """Whether a string names one of the four seasons, case-insensitively."""
+    return isinstance(season, str) and season.upper() in SEASONS

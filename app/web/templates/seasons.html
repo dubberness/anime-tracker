@@ -31,6 +31,19 @@
     <span class="meter-value" id="season-summary"></span>
   </div>
 
+  <div class="toolbar" style="margin-top:-4px">
+    <label class="hint" for="picker-year">Browse another season</label>
+    <select id="picker-season">
+      <option value="WINTER">Winter</option>
+      <option value="SPRING">Spring</option>
+      <option value="SUMMER">Summer</option>
+      <option value="FALL">Fall</option>
+    </select>
+    <select id="picker-year"></select>
+    <button class="button button-tiny" id="picker-load">Browse</button>
+    <span class="hint" id="picker-note"></span>
+  </div>
+
   <div class="table-wrap">
     <table id="season-table" data-sonarr="{{ '1' if data.sonarr_enabled else '' }}">
       <thead>
@@ -40,13 +53,14 @@
           <th scope="col">Title</th>
           <th scope="col">Score</th>
           <th scope="col">Popularity</th>
+          <th scope="col">Episodes</th>
           <th scope="col">Shoko</th>
           {% if data.sonarr_enabled %}<th scope="col">Sonarr</th>{% endif %}
           <th scope="col">Autobrr</th>
         </tr>
       </thead>
       <tbody id="season-body">
-        <tr><td colspan="8"><p class="empty-state">Loading...</p></td></tr>
+        <tr><td colspan="9"><p class="empty-state">Loading...</p></td></tr>
       </tbody>
     </table>
   </div>
@@ -59,16 +73,18 @@
   </p>
 
   <p class="hint">
-    The top {{ settings.autobrr.auto_seed_limit }} shows Shoko is missing are tracked for
-    autobrr automatically, counted separately for this season and the next.
-    Anything marked <span class="pill pill-good">New season</span> is tracked even
-    when it ranks below that cutoff &mdash; the next season of a show with a small
-    audience rarely charts, and that's the one you'd want most. Track anything
-    else by hand. Tracked shows drop off once Shoko has them, and untracking an
-    automatic pick keeps it off.
+    Automatic tracking is seeded from the
+    <a href="{{ url_for('airing_page') }}">airing page</a> plus the upcoming
+    season, not from the current season's chart &mdash; a show that carries
+    over from a previous season no longer appears there. Anything marked
+    <span class="pill pill-good">New season</span> is tracked even when it
+    ranks below the cutoff: the next season of a show with a small audience
+    rarely charts, and that's the one you'd want most. Track anything else by
+    hand; a tracked show stays on the list while it is still airing, even once
+    Shoko has part of it, and untracking an automatic pick keeps it off.
     <strong>{{ tracked_count }}</strong> tracked right now &mdash; see the
-    <a href="{{ url_for('settings_page') }}">settings page</a> for the list URL to
-    give autobrr.
+    <a href="{{ url_for('settings_page') }}">settings page</a> for the list URL
+    to give autobrr.
   </p>
 </section>
 

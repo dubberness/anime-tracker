@@ -20,6 +20,9 @@ fragment trackedMedia on Media {
   episodes
   genres
   status
+  season
+  seasonYear
+  nextAiringEpisode { episode airingAt }
   startDate { year }
   coverImage { large }
   relations {
@@ -36,6 +39,20 @@ query ($page: Int, $perPage: Int, $formats: [MediaFormat], $sort: [MediaSort]) {
   Page(page: $page, perPage: $perPage) {
     pageInfo { hasNextPage }
     media(type: ANIME, format_in: $formats, sort: $sort) { ...trackedMedia }
+  }
+}
+""" + MEDIA_FRAGMENT
+
+# Everything AniList currently marks as airing, regardless of which season it
+# started in. A season query cannot answer this: AniList tags media with its
+# *start* season, so a two-cour Spring show is invisible in the Summer chart
+# even though it is still going out weekly.
+AIRING_QUERY = """
+query ($page: Int, $perPage: Int, $formats: [MediaFormat]) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { hasNextPage }
+    media(type: ANIME, status: RELEASING, format_in: $formats,
+          sort: [POPULARITY_DESC]) { ...trackedMedia }
   }
 }
 """ + MEDIA_FRAGMENT
@@ -166,6 +183,67 @@ class AniListClient:
 
         entries = entries[: self.settings.max_results]
         log.info("AniList entries loaded: %s", len(entries))
+        return entries
+
+    def fetch_airing(self, progress=None):
+        """Everything AniList currently marks RELEASING, most popular first.
+
+        Deliberately uncached, like fetch_season: the whole point is knowing
+        what is going out *now*, and a day-old answer is how episodes get
+        missed in the first place.
+
+        The popularity floor that compare_collections applies is deliberately
+        not used here - a show three episodes into its first cour has barely
+        any popularity yet, and those are exactly the ones worth catching.
+        """
+        entries = []
+        page = 1
+        rank = 1
+
+        while True:
+            if progress:
+                progress(f"Airing page {page} ({len(entries)} shows)")
+
+            payload = {
+                "query": AIRING_QUERY,
+                "variables": {
+                    "page": page,
+                    "perPage": self.settings.page_size,
+                    "formats": self.settings.formats,
+                },
+            }
+
+            data = request_with_retry(
+                "POST", self.settings.url,
+                max_retries=self.network.max_retries,
+                backoff=self.network.initial_backoff_seconds,
+                timeout=self.network.timeout_seconds,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+
+            if data.get("errors") and not data.get("data"):
+                raise RuntimeError(f"AniList returned errors: {data['errors']}")
+
+            page_data = data["data"]["Page"]
+            media = page_data.get("media") or []
+
+            for item in media:
+                item["rank"] = rank
+                rank += 1
+
+            entries.extend(media)
+
+            if (not page_data["pageInfo"]["hasNextPage"]
+                    or not media
+                    or len(entries) >= self.settings.airing_max_results):
+                break
+
+            page += 1
+            time.sleep(self.settings.request_delay_ms / 1000)
+
+        entries = entries[: self.settings.airing_max_results]
+        log.info("Airing shows loaded: %s", len(entries))
         return entries
 
     def fetch_season(self, season, year, per_page=20):

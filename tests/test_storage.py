@@ -160,3 +160,73 @@ def test_excluding_twice_does_not_error(tmp_path):
     store.untrack_autobrr(1, exclude=True)
 
     assert store.autobrr_excluded_ids() == {1}
+
+
+# ==========================
+# Observed AniList status
+# ==========================
+
+def test_recording_a_status_stamps_when_it_was_seen(tmp_path):
+    store = make_storage(tmp_path)
+    store.track_autobrr(1, "Frieren")
+
+    store.record_autobrr_status(1, "RELEASING")
+
+    row = store.list_autobrr_tracked()[0]
+    assert row["status"] == "RELEASING"
+    assert row["status_at"] != ""
+
+
+def test_reobserving_the_same_status_does_not_restamp(tmp_path):
+    """The grace clock runs from the transition, not from the last sighting."""
+    store = make_storage(tmp_path)
+    store.track_autobrr(1, "Frieren")
+    store.record_autobrr_status(1, "FINISHED")
+    first = store.list_autobrr_tracked()[0]["status_at"]
+
+    store.record_autobrr_status(1, "FINISHED")
+
+    assert store.list_autobrr_tracked()[0]["status_at"] == first
+
+
+def test_changing_status_restamps(tmp_path):
+    store = make_storage(tmp_path)
+    store.track_autobrr(1, "Frieren")
+    store.record_autobrr_status(1, "RELEASING")
+    store.record_autobrr_status(1, "FINISHED")
+
+    row = store.list_autobrr_tracked()[0]
+    assert row["status"] == "FINISHED"
+    assert row["status_at"] != ""
+
+
+def test_status_columns_are_added_to_a_database_that_predates_them(tmp_path):
+    """CREATE TABLE IF NOT EXISTS is a no-op, so upgrades need the ALTER."""
+    store = make_storage(tmp_path)
+
+    with store._connect() as conn:
+        conn.execute("DROP TABLE autobrr_tracked")
+        conn.execute(
+            """
+            CREATE TABLE autobrr_tracked (
+                anilist_id  INTEGER PRIMARY KEY,
+                title       TEXT    NOT NULL,
+                title_alt   TEXT    NOT NULL DEFAULT '',
+                mal_id      TEXT    NOT NULL DEFAULT '',
+                anidb_id    TEXT    NOT NULL DEFAULT '',
+                source      TEXT    NOT NULL DEFAULT 'manual',
+                added_at    TEXT    NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO autobrr_tracked (anilist_id, title, added_at) "
+            "VALUES (1, 'Frieren', '2026-01-01T00:00:00')"
+        )
+
+    upgraded = make_storage(tmp_path)
+
+    row = upgraded.list_autobrr_tracked()[0]
+    assert row["title"] == "Frieren"
+    assert row["status"] == ""
+    assert row["status_at"] == ""

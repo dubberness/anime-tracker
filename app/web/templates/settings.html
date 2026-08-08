@@ -128,17 +128,31 @@
       </div>
     </div>
 
-    <div class="field">
-      <label for="autobrr-seed">Auto-track each season's top</label>
-      <input type="number" id="autobrr-seed" data-path="autobrr.auto_seed_limit"
-             min="1" max="50" value="{{ values.autobrr.auto_seed_limit }}">
-      <p class="hint">
-        Each run tracks this many of the most popular shows Shoko is missing,
-        counted separately for the current season and the next - so 10 here means
-        up to 20. A new season of something you already have is tracked even when
-        it ranks below the cutoff, since those rarely chart. Anything you untrack
-        by hand stays untracked.
-      </p>
+    <div class="field-row">
+      <div class="field">
+        <label for="autobrr-seed">Auto-track the top</label>
+        <input type="number" id="autobrr-seed" data-path="autobrr.auto_seed_limit"
+               min="1" max="50" value="{{ values.autobrr.auto_seed_limit }}">
+        <p class="hint">
+          Each run tracks this many of the most popular shows Shoko doesn't have
+          in full, counted separately for what's currently airing and for the
+          upcoming season - so 10 here means up to 20. A new season of something
+          you already have is tracked even when it ranks below the cutoff, since
+          those rarely chart. Anything you untrack by hand stays untracked.
+        </p>
+      </div>
+
+      <div class="field">
+        <label for="autobrr-grace">Keep finished shows for</label>
+        <input type="number" id="autobrr-grace" data-path="autobrr.finished_grace_days"
+               min="0" max="90" value="{{ values.autobrr.finished_grace_days }}">
+        <p class="hint">
+          Days. AniList marks a show finished when its last episode airs, which
+          is before a release group posts it &mdash; dropping immediately would
+          lose most finales. 0 drops on the day. A show Shoko already has in
+          full drops straight away either way.
+        </p>
+      </div>
     </div>
 
     <button type="button" class="button" data-test="autobrr">Test connection</button>
@@ -204,14 +218,26 @@
       </div>
     </div>
 
-    <div class="field">
-      <label for="season-limit">Shows per season</label>
-      <input type="number" id="season-limit" data-path="ui.season_limit"
-             min="1" max="50" value="{{ values.ui.season_limit }}">
-      <p class="hint">
-        How many to list on the Seasons page, for the current season and the
-        one either side. AniList caps this at 50.
-      </p>
+    <div class="field-row">
+      <div class="field">
+        <label for="season-limit">Shows per season</label>
+        <input type="number" id="season-limit" data-path="ui.season_limit"
+               min="1" max="50" value="{{ values.ui.season_limit }}">
+        <p class="hint">
+          How many to list on the Seasons page, for the current season and the
+          one either side. AniList caps this at 50.
+        </p>
+      </div>
+
+      <div class="field">
+        <label for="airing-limit">Airing shows to check</label>
+        <input type="number" id="airing-limit" data-path="anilist.airing_max_results"
+               min="1" max="500" value="{{ values.anilist.airing_max_results }}">
+        <p class="hint">
+          How far down the currently-airing list the Airing page looks. Fetched
+          50 at a time, so 200 is four requests.
+        </p>
+      </div>
     </div>
   </section>
 
