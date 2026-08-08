@@ -4,7 +4,8 @@ import config as config_mod
 from core import compare
 
 
-def media(anilist_id, rank, popularity=100000, score=80, prequel=False, **kwargs):
+def media(anilist_id, rank, popularity=100000, score=80, prequel=False,
+          next_episode=None, **kwargs):
     entry = {
         "id": anilist_id,
         "rank": rank,
@@ -18,6 +19,8 @@ def media(anilist_id, rank, popularity=100000, score=80, prequel=False, **kwargs
     }
     if prequel:
         entry["relations"]["edges"].append(prequel_edge(1))
+    if next_episode is not None:
+        entry["nextAiringEpisode"] = {"episode": next_episode, "airingAt": 1700000000}
     entry.update(kwargs)
     return entry
 
@@ -625,3 +628,144 @@ def test_season_entries_drop_duplicates():
         mal_ids=set(), anidb_ids=set(),
     )
     assert [e.anilist_id for e in entries] == [1, 2]
+
+
+# ==========================
+# Per-series episode counts
+# ==========================
+
+def test_per_series_counts_are_keyed_by_both_id_kinds():
+    by_mal, by_anidb = compare.extract_shoko_episode_counts([
+        {"IDs": {"MAL": [100], "AniDB": 200}, "Sizes": {"Local": {"Episodes": 12}}},
+    ])
+    assert by_mal == {"100": 12}
+    assert by_anidb == {"200": 12}
+
+
+def test_per_series_counts_sum_across_a_shared_mal_id():
+    """Split-cour is often two Shoko series sharing one MAL ID."""
+    by_mal, _ = compare.extract_shoko_episode_counts([
+        {"IDs": {"MAL": [100], "AniDB": 200}, "Sizes": {"Local": {"Episodes": 12}}},
+        {"IDs": {"MAL": [100], "AniDB": 201}, "Sizes": {"Local": {"Episodes": 11}}},
+    ])
+    assert by_mal == {"100": 23}
+
+
+def test_per_series_counts_skip_series_with_no_ids():
+    assert compare.extract_shoko_episode_counts([
+        {"Sizes": {"Local": {"Episodes": 12}}},
+    ]) == ({}, {})
+
+
+def test_per_series_counts_survive_garbage_values():
+    by_mal, _ = compare.extract_shoko_episode_counts([
+        {"IDs": {"MAL": [100]}, "Sizes": {"Local": {"Episodes": "nonsense"}}},
+    ])
+    assert by_mal == {}
+
+
+def test_local_episode_count_lands_on_the_entry():
+    entries = compare.build_season_entries(
+        [media(1, 1)], {1: {"mal_id": "100", "anidb_id": "200"}},
+        mal_ids={"100"}, anidb_ids=set(),
+        local_by_mal={"100": 7}, local_by_anidb={},
+    )
+    assert entries[0].episodes_local == 7
+
+
+def test_local_episode_count_takes_the_max_not_the_sum():
+    """One Shoko series exports both IDs; summing would double every count."""
+    entries = compare.build_season_entries(
+        [media(1, 1)], {1: {"mal_id": "100", "anidb_id": "200"}},
+        mal_ids={"100"}, anidb_ids=set(),
+        local_by_mal={"100": 7}, local_by_anidb={"200": 7},
+    )
+    assert entries[0].episodes_local == 7
+
+
+def test_local_episode_count_defaults_to_zero_without_lookups():
+    entries = compare.build_season_entries(
+        [media(1, 1)], {1: {"mal_id": "100"}}, mal_ids=set(), anidb_ids=set(),
+    )
+    assert entries[0].episodes_local == 0
+
+
+# ==========================
+# Aired episodes
+# ==========================
+
+def test_aired_is_one_behind_the_next_airing_episode():
+    assert compare.aired_episodes(media(1, 1, next_episode=6)) == 5
+
+
+def test_nothing_has_aired_before_the_first_episode():
+    assert compare.aired_episodes(media(1, 1, next_episode=1)) == 0
+
+
+def test_aired_is_unknown_for_a_releasing_show_on_break():
+    """No nextAiringEpisode between cours - "0 aired" would be a lie."""
+    assert compare.aired_episodes(media(1, 1, status="RELEASING")) is None
+
+
+def test_a_finished_show_has_aired_its_full_run():
+    assert compare.aired_episodes(
+        media(1, 1, status="FINISHED", episodes=12)
+    ) == 12
+
+
+def test_a_finished_show_with_no_episode_count_is_unknown():
+    assert compare.aired_episodes(
+        media(1, 1, status="FINISHED", episodes=None)
+    ) is None
+
+
+# ==========================
+# Long runners
+# ==========================
+
+def test_one_piece_shape_is_a_long_runner():
+    assert compare.is_long_runner(
+        media(1, 1, episodes=None, next_episode=1100), today_year=2026
+    ) is True
+
+
+def test_sazae_san_shape_is_a_long_runner():
+    assert compare.is_long_runner(
+        media(1, 1, episodes=None, startDate={"year": 1969}), today_year=2026
+    ) is True
+
+
+def test_a_new_cour_with_no_confirmed_length_is_not_a_long_runner():
+    """`episodes` is null on plenty of ordinary new shows - the floors matter."""
+    assert compare.is_long_runner(
+        media(1, 1, episodes=None, next_episode=5, startDate={"year": 2026}),
+        today_year=2026,
+    ) is False
+
+
+def test_a_normal_two_cour_show_is_not_a_long_runner():
+    assert compare.is_long_runner(
+        media(1, 1, episodes=24, next_episode=200), today_year=2026
+    ) is False
+
+
+# ==========================
+# Completeness
+# ==========================
+
+def test_a_show_is_complete_when_shoko_has_every_aired_episode():
+    assert compare.is_complete(
+        {"owned": True, "episodes_aired": 5, "episodes_local": 5}
+    ) is True
+
+
+def test_a_show_missing_an_aired_episode_is_incomplete():
+    assert compare.is_complete(
+        {"owned": True, "episodes_aired": 5, "episodes_local": 4}
+    ) is False
+
+
+def test_completeness_falls_back_to_ownership_when_aired_is_unknown():
+    """Pre-4.3 payloads have no counts; owned has to keep meaning complete."""
+    assert compare.is_complete({"owned": True}) is True
+    assert compare.is_complete({"owned": False}) is False

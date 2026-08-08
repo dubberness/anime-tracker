@@ -41,3 +41,22 @@ def test_shift_wraps_in_both_directions():
 
 def test_label_is_human_readable():
     assert seasons.label("SUMMER", 2026) == "Summer 2026"
+
+
+def test_index_orders_seasons_within_a_year():
+    assert seasons.index("WINTER", 2026) < seasons.index("SUMMER", 2026)
+
+
+def test_index_orders_across_the_year_boundary():
+    assert seasons.index("FALL", 2025) < seasons.index("WINTER", 2026)
+
+
+def test_is_valid_accepts_the_four_seasons_in_any_case():
+    assert seasons.is_valid("WINTER") is True
+    assert seasons.is_valid("summer") is True
+
+
+def test_is_valid_rejects_anything_else():
+    assert seasons.is_valid("AUTUMN") is False
+    assert seasons.is_valid("") is False
+    assert seasons.is_valid(None) is False

@@ -11,6 +11,7 @@ from datetime import datetime
 PHASES = [
     "mappings",
     "anilist",
+    "airing",
     "shoko",
     "sonarr",
     "compare",

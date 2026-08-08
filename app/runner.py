@@ -3,6 +3,7 @@
 import threading
 import time
 import traceback
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from clients import AniListClient, AutobrrClient, ShokoClient, SonarrClient
@@ -16,6 +17,31 @@ from logging_setup import get_logger
 log = get_logger(__name__)
 
 
+@dataclass
+class LookupContext:
+    """Everything build_season_entries needs, kept alive between runs.
+
+    The season picker fetches one season at request time and has to match it
+    against Shoko and Sonarr right there, but those libraries are only read
+    during a run. Holding the last run's lookups costs about 25MB - nearly all
+    of it the mapping file, which used to be parsed and thrown away every run
+    anyway - and avoids both bloating results.json with data the browser never
+    reads and hammering Shoko from a web worker thread.
+
+    Never mutated after construction, which is what makes it safe to hand the
+    same instance to all eight waitress threads.
+    """
+
+    mappings: dict = field(default_factory=dict)
+    mal_ids: set = field(default_factory=set)
+    anidb_ids: set = field(default_factory=set)
+    local_by_mal: dict = field(default_factory=dict)
+    local_by_anidb: dict = field(default_factory=dict)
+    sonarr_index: dict = field(default_factory=dict)
+    sonarr_available: bool = False
+    built_at: datetime = None
+
+
 class Runner:
     """Owns one tracking run at a time and the results it produces."""
 
@@ -25,6 +51,8 @@ class Runner:
         self.state = run_state
         self._results_lock = threading.Lock()
         self._results = None
+        self._lookups_lock = threading.Lock()
+        self._lookups = None
 
     # ==========================
     # Results access
@@ -49,6 +77,20 @@ class Runner:
         with self._results_lock:
             self._results = payload
         self.storage.save_results(payload)
+
+    @property
+    def lookups(self):
+        """The last run's library lookups, or None before the first run.
+
+        The lock guards the reference swap only - the contents are immutable
+        once built, so readers need nothing further.
+        """
+        with self._lookups_lock:
+            return self._lookups
+
+    def _store_lookups(self, lookups):
+        with self._lookups_lock:
+            self._lookups = lookups
 
     # ==========================
     # Run
@@ -104,9 +146,45 @@ class Runner:
             self.state.finish(error=error)
             self.storage.prune()
 
+    def _build_airing(self, media_list, mappings, mal_ids, anidb_ids, owned_ids,
+                      local_by_mal, local_by_anidb, sonarr_index,
+                      sonarr_available):
+        """The currently-airing block, or an unavailable marker on failure.
+
+        `available` is what the page uses to explain itself: an empty list
+        because AniList was down reads very differently from an empty list
+        because nothing is airing.
+        """
+        if media_list is None:
+            return {
+                "entries": [], "available": False, "count": 0,
+                "long_runners": 0,
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+        entries = compare.build_season_entries(
+            media_list, mappings, mal_ids, anidb_ids,
+            sonarr_index, sonarr_available, limit=len(media_list),
+            owned_ids=owned_ids,
+            local_by_mal=local_by_mal, local_by_anidb=local_by_anidb,
+        )
+
+        long_runners = sum(1 for entry in entries if entry.is_long_runner)
+        log.info("Airing: %s shows (%s long-runners), %s already in Shoko",
+                 len(entries), long_runners,
+                 sum(1 for entry in entries if entry.owned))
+
+        return {
+            "entries": [entry.to_dict() for entry in entries],
+            "available": True,
+            "count": len(entries),
+            "long_runners": long_runners,
+            "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
     def _build_seasons(self, client, settings, mappings, mal_ids, anidb_ids,
                        sonarr_index, sonarr_available, previous_seasons,
-                       owned_ids=None):
+                       owned_ids=None, local_by_mal=None, local_by_anidb=None):
         """Ranked charts for the current season and the one either side.
 
         A failure here keeps the previous run's charts rather than blanking the
@@ -142,6 +220,8 @@ class Runner:
                             media, mappings, mal_ids, anidb_ids,
                             sonarr_index, sonarr_available, limit,
                             owned_ids,
+                            local_by_mal=local_by_mal,
+                            local_by_anidb=local_by_anidb,
                         )
                     ]
                     for key, media in ranked.items()
@@ -192,20 +272,45 @@ class Runner:
         if updated:
             log.info("Refreshed %s tracked autobrr show(s) with newer data", updated)
 
-    def _prune_tracked(self, mal_ids, anidb_ids):
-        """Drop tracked shows Shoko has since picked up."""
-        removed = 0
+    def _record_statuses(self, statuses):
+        """Stamp the AniList status seen for each tracked show.
+
+        Runs before the prune so the grace clock starts on the run a finish is
+        first observed, not the run after it.
+        """
+        if not statuses:
+            return
 
         for row in self.storage.list_autobrr_tracked():
-            if autobrr_mod.is_now_owned(row, mal_ids, anidb_ids):
-                self.storage.untrack_autobrr(row["anilist_id"])
-                log.info("Untracking '%s' from autobrr - Shoko has it now", row["title"])
-                removed += 1
+            media = statuses.get(row["anilist_id"])
+            if media and media.get("status"):
+                self.storage.record_autobrr_status(
+                    row["anilist_id"], media["status"]
+                )
 
-        return removed
+    def _prune_tracked(self, statuses, mal_ids, anidb_ids,
+                       local_by_mal=None, local_by_anidb=None, grace_days=14):
+        """Drop tracked shows that are done, cancelled or never coming.
 
-    def _auto_seed_tracked(self, seasons, limit):
-        """Track what this season and the next are missing from Shoko.
+        `statuses` is None when AniList could not be reached, which makes this
+        a no-op - see core.autobrr.prune_plan.
+        """
+        drops = autobrr_mod.prune_plan(
+            self.storage.list_autobrr_tracked(), statuses, mal_ids, anidb_ids,
+            local_by_mal=local_by_mal, local_by_anidb=local_by_anidb,
+            grace_days=grace_days,
+        )
+
+        for row, reason in drops:
+            # Never exclude: an aged-out show has to stay re-trackable, and an
+            # exclusion is indistinguishable from a deliberate "no".
+            self.storage.untrack_autobrr(row["anilist_id"], exclude=False)
+            log.info("Untracking '%s' from autobrr - %s", row["title"], reason)
+
+        return len(drops)
+
+    def _auto_seed_tracked(self, airing, seasons, limit):
+        """Track what's airing and what's coming that Shoko is missing.
 
         Shows seeded from the upcoming season usually have no MAL or AniDB ID
         yet - they are exactly the ones the mapping file hasn't caught up with
@@ -215,7 +320,7 @@ class Runner:
         hand.
         """
         candidates = autobrr_mod.auto_seed_candidates(
-            seasons, self.storage.autobrr_excluded_ids(), limit
+            airing, seasons, self.storage.autobrr_excluded_ids(), limit
         )
         already = self.storage.autobrr_tracked_ids()
         added = 0
@@ -256,6 +361,23 @@ class Runner:
             progress=lambda msg: self.state.set_message(msg)
         )
 
+        # ---- airing ----
+        # AniList tags media with its *start* season, so a two-cour show is
+        # invisible in the season chart it carries over into. This query asks
+        # what is airing regardless of season, and is what auto-seeding reads.
+        #
+        # A failure here must never fail the run: `airing_media` stays None,
+        # which makes the prune a no-op rather than untracking everything.
+        self.state.set_phase("airing", "Checking what is currently airing")
+        airing_media = None
+        try:
+            airing_media = anilist_client.fetch_airing(
+                progress=lambda msg: self.state.set_message(msg)
+            )
+        except Exception as exc:  # noqa: BLE001 - airing data is best-effort
+            log.error("Airing fetch failed - nothing will be untracked this "
+                      "run and auto-seeding is skipped: %s", exc)
+
         # ---- Shoko ----
         self.state.set_phase("shoko", "Reading the Shoko library")
         shoko_client = ShokoClient(settings.shoko, network)
@@ -266,10 +388,12 @@ class Runner:
         shoko_entries, mal_ids, anidb_ids, tvdb_ids = compare.build_shoko_index(
             shoko_series, mapping_lookup
         )
+        local_by_mal, local_by_anidb = compare.extract_shoko_episode_counts(
+            shoko_series
+        )
         shoko_episodes, episodes_suspect = compare.count_shoko_episodes(shoko_series)
 
         self._refresh_tracked(mapping_lookup, anilist)
-        self._prune_tracked(mal_ids, anidb_ids)
 
         # ---- Sonarr ----
         # Ahead of the comparison so every tracked entry can carry its Sonarr
@@ -316,6 +440,12 @@ class Runner:
         results = compare.compare_collections(
             anilist, mapping_lookup, mal_ids, anidb_ids, settings.anilist,
             sonarr_index, sonarr_available, owned_ids,
+            local_by_mal=local_by_mal, local_by_anidb=local_by_anidb,
+        )
+
+        airing = self._build_airing(
+            airing_media, mapping_lookup, mal_ids, anidb_ids, owned_ids,
+            local_by_mal, local_by_anidb, sonarr_index, sonarr_available,
         )
 
         stats = stats_mod.build_stats(results)
@@ -337,13 +467,38 @@ class Runner:
         seasons = self._build_seasons(
             anilist_client, settings, mapping_lookup, mal_ids, anidb_ids,
             sonarr_index, sonarr_available, previous.get("seasons"), owned_ids,
+            local_by_mal, local_by_anidb,
         )
 
         # ---- autobrr ----
-        # After the seasons phase, since auto-seeding reads the current
-        # season block that step produces.
+        # Pruning lives here rather than back in the Shoko phase because the
+        # decision now turns on AniList status, not on ownership alone.
         self.state.set_phase("autobrr", "Updating the autobrr list")
-        self._auto_seed_tracked(seasons, settings.autobrr.auto_seed_limit)
+
+        statuses = None
+        if airing_media is not None:
+            statuses = {
+                int(media["id"]): {
+                    "status": media.get("status"),
+                    "episodes_aired": compare.aired_episodes(media),
+                }
+                for media in list(anilist) + list(airing_media)
+                if media.get("id")
+            }
+
+        self._record_statuses(statuses)
+        self._prune_tracked(
+            statuses, mal_ids, anidb_ids, local_by_mal, local_by_anidb,
+            settings.autobrr.finished_grace_days,
+        )
+        # The upcoming season block seeds regardless of whether the airing
+        # fetch worked - it's independent data, and skipping it would lose the
+        # head start on next season's sequels for no reason.
+        self._auto_seed_tracked(
+            airing["entries"] if airing_media is not None else None,
+            seasons,
+            settings.autobrr.auto_seed_limit,
+        )
         autobrr_tracked = self.storage.list_autobrr_tracked()
 
         if settings.autobrr.configured:
@@ -355,6 +510,23 @@ class Runner:
         # ---- persist ----
         self.state.set_phase("persist", "Saving results")
         duration = (datetime.now() - started).total_seconds()
+
+        # Held for the season picker, which has to match an on-demand fetch
+        # against Shoko and Sonarr outside of any run.
+        self._store_lookups(LookupContext(
+            mappings=mapping_lookup,
+            mal_ids=mal_ids,
+            anidb_ids=anidb_ids,
+            local_by_mal=local_by_mal,
+            local_by_anidb=local_by_anidb,
+            sonarr_index=sonarr_index,
+            sonarr_available=sonarr_available,
+            built_at=datetime.now(),
+        ))
+
+        today = date.today()
+        current_season = season_mod.season_of(today)
+        current_year = today.year
 
         payload = {
             "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -374,6 +546,8 @@ class Runner:
             "totals": totals,
             "comparison": comparison,
             "seasons": seasons,
+            "airing": airing,
+            "current_season": {"season": current_season, "year": current_year},
             "autobrr_tracked": len(autobrr_tracked),
             "autobrr_enabled": bool(settings.autobrr.configured),
             "sonarr_enabled": sonarr_enabled,

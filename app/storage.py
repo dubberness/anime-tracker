@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS autobrr_tracked (
     mal_id      TEXT    NOT NULL DEFAULT '',
     anidb_id    TEXT    NOT NULL DEFAULT '',
     source      TEXT    NOT NULL DEFAULT 'manual',
-    added_at    TEXT    NOT NULL
+    added_at    TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT '',
+    status_at   TEXT    NOT NULL DEFAULT ''
 );
 
 -- Shows deliberately untracked. Without this an auto-seeded pick would come
@@ -80,7 +82,28 @@ class Storage:
     def init_db(self):
         with self._lock, self._connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
         log.debug("History database ready at %s", self.database_file)
+
+    @staticmethod
+    def _migrate(conn):
+        """Add columns to tables that predate them.
+
+        CREATE TABLE IF NOT EXISTS is a no-op against an existing database, so
+        editing SCHEMA alone would leave every upgraded install on the old
+        shape and failing on the first read of a new column.
+        """
+        existing = {
+            row["name"] for row in conn.execute("PRAGMA table_info(autobrr_tracked)")
+        }
+
+        for name, ddl in (("status", "TEXT NOT NULL DEFAULT ''"),
+                          ("status_at", "TEXT NOT NULL DEFAULT ''")):
+            if name not in existing:
+                conn.execute(
+                    f"ALTER TABLE autobrr_tracked ADD COLUMN {name} {ddl}"
+                )
+                log.info("Added autobrr_tracked.%s to the existing database", name)
 
     # ==========================
     # Run history
@@ -219,6 +242,27 @@ class Storage:
                     (int(anilist_id),
                      datetime.now().isoformat(timespec="seconds")),
                 )
+
+    def record_autobrr_status(self, anilist_id, status):
+        """Store the AniList status observed for a tracked show.
+
+        Only a *change* restamps status_at. Re-observing FINISHED every night
+        would otherwise keep pushing the grace clock forward and nothing would
+        ever age out.
+
+        Deliberately not routed through track_autobrr: that clears the
+        exclusion table, which would be wrong to trigger on a status refresh.
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE autobrr_tracked
+                   SET status = ?, status_at = ?
+                 WHERE anilist_id = ? AND status != ?
+                """,
+                (status, datetime.now().isoformat(timespec="seconds"),
+                 int(anilist_id), status),
+            )
 
     def list_autobrr_tracked(self):
         """Every tracked show, oldest first."""

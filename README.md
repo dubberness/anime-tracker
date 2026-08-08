@@ -5,7 +5,7 @@ A self-hosted web app that compares an AniList ranked list against your
 migration. Runs on a schedule in Docker, with a built-in dashboard and
 settings UI.
 
-![version](https://img.shields.io/badge/version-4.2-blue)
+![version](https://img.shields.io/badge/version-4.3-blue)
 
 ## What it does
 
@@ -14,10 +14,13 @@ settings UI.
 - **Two libraries side by side** — every tracked show carries both its Shoko
   and its Sonarr status, so "in Shoko only", "in Sonarr only" and "in neither"
   are one click apart.
+- **Airing now** — everything AniList lists as airing, whichever season it
+  started in, with how many episodes have aired against how many Shoko has.
 - **Seasonal charts** — the top shows of this season and the one either side,
-  with the same Shoko/Sonarr status on each, and a **New season** badge on
-  anything whose earlier season is already in Shoko.
-- **Autobrr hand-off** — the currently-airing shows Shoko is missing, published
+  with the same Shoko/Sonarr status on each, a **New season** badge on anything
+  whose earlier season is already in Shoko, and a picker for browsing any season
+  back to 1960.
+- **Autobrr hand-off** — the airing shows Shoko doesn't have in full, published
   as a title list autobrr can grab from, with new seasons of what you already
   have taking priority.
 - **Recommendations** — the highest-value things you're missing, filtered to
@@ -76,13 +79,15 @@ All settings live in `/config/config.json` and are editable from the
 | Shoko URL / API key | — | Required |
 | Sonarr URL / API key | — | Optional; migration section hides without it |
 | Autobrr URL / API key / list ID | — | Optional; only for pushing an instant list refresh |
-| Auto-track each season's top | `10` | Counted separately for this season and the next; new seasons of what you own are tracked even below the cutoff |
+| Auto-track the top | `10` | Counted separately for what's airing and for the upcoming season; new seasons of what you own are tracked even below the cutoff |
+| Keep finished shows for | `14` | Days a finished-but-incomplete show stays on the autobrr list; 0 drops immediately |
 | Formats | `TV` | TV, Movie, OVA, ONA, Special… |
 | Ranked by | Popularity | Popularity, Score, Trending, Favourites |
 | How many | `1000` | How far down the list to track |
 | Minimum popularity | `50000` | Skips obscure entries |
 | Tiers | `100, 250, 500, 1000` | Rank tiers for the progress bars |
 | Shows per season | `20` | How many per season on the Seasons page (max 50) |
+| Airing shows to check | `200` | How far down the currently-airing list the Airing page looks (max 500) |
 | Cron schedule | `0 4 * * *` | Container timezone |
 | Run on start | on | Run immediately when the container starts |
 | Cache lifetime | `24h` | How long before AniList is re-fetched |
@@ -225,9 +230,20 @@ Shows are matched against Shoko exactly as the library page does. Ones airing
 next season are often too new for the mapping file, so they legitimately show as
 unmatched rather than missing.
 
+### Browsing older seasons
+
+The picker under the toolbar fetches any season back to 1960 on demand and adds
+it as a tab. Results are cached for 15 minutes, since clicking back through a
+decade would otherwise be dozens of AniList requests in under a minute.
+
+Past seasons are read-only — nothing there is still airing, so there's nothing
+for autobrr to wait for. Shoko and Sonarr status still show, matched against the
+last run's library data; before the first run those columns are blank rather
+than claiming everything is missing.
+
 ## Autobrr
 
-The Seasons page can hand currently-airing shows to
+The Airing page hands currently-airing shows to
 [autobrr](https://autobrr.com/), which watches your indexers and grabs new
 episodes as they're released — the piece that replaces Sonarr once you've
 moved off it.
@@ -251,9 +267,10 @@ tell that filter *which shows to match*, using autobrr's built-in
 
 | | |
 |---|---|
-| **Automatic** | Each run tracks the top *N* by popularity (default 10) that Shoko doesn't have **from each of** the current season and the next — so the default is up to 20 — plus any new season of something you already own that ranked below the cutoff |
-| **Manual** | **Track** on any row of the Seasons page — including the previous season, or past the automatic cutoff |
-| **Removed** | Automatically, once Shoko has the show — there's nothing left to grab |
+| **Automatic** | Each run tracks the top *N* by popularity (default 10) that Shoko doesn't have **in full**, **from each of** what's currently airing and the upcoming season — so the default is up to 20 — plus any new season of something you already own that ranked below the cutoff |
+| **Manual** | **Track** on any row of the Airing or Seasons page — including past the automatic cutoff |
+| **Kept** | While a show is still airing, even once Shoko has part of it, and while it's on a break between cours |
+| **Removed** | When Shoko has every episode that has aired, when it's cancelled, or `finished_grace_days` after AniList marks it finished |
 | **Untracked by hand** | Stays off. Untracking one of the automatic picks records the choice so the next run doesn't re-add it; the freed slot goes to the next-ranked show |
 
 Seeding from the upcoming season means a sequel is on the list before it starts
@@ -269,6 +286,33 @@ throughout.
 
 Each show contributes its English **and** romaji title where they differ, since
 release groups use one or the other.
+
+### Why "airing", not "this season"
+
+AniList tags a show with the season it *started* in. A two-cour show that began
+in Spring is still tagged Spring all through Summer, so it disappears from the
+current season's chart while it's still going out weekly — which is exactly how
+an episode gets missed. The Airing page queries by status instead, so
+carryovers and split-cour sequels stay visible and stay tracked.
+
+Two consequences worth knowing:
+
+- **Partial ownership is not "done".** Shoko registers a series as soon as one
+  episode imports. Tracking keys on whether every *aired* episode is on disk,
+  not on whether the series exists.
+- **Long-runners are excluded from auto-tracking.** One Piece and Detective
+  Conan are perpetually airing; auto-tracking them would point autobrr at a
+  thousand-episode back catalogue. They're hidden behind a checkbox on the
+  Airing page and can still be tracked by hand.
+
+The grace period exists because AniList flips a show to `FINISHED` when its
+last episode *airs*, which is hours before a release group posts it — dropping
+on that flip would lose most finales. Set it to 0 to drop immediately.
+
+If AniList can't be reached, a run untracks nothing and auto-tracks nothing:
+handing autobrr an empty list would silently stop every grab, which is far
+worse than carrying a few stale titles for a night. The Airing page says so
+when that happens.
 
 The list endpoint is unauthenticated so autobrr can poll it, and returns an
 empty body when nothing is tracked — that's a normal state, not an error. Like
@@ -286,6 +330,7 @@ the rest of the app it assumes a trusted LAN.
 | `GET/POST /api/settings` | Read/update settings (secrets masked on read) |
 | `POST /api/test/<service>` | Test a connection |
 | `GET /api/diagnostics/shoko` | Report Shoko's ID field shapes |
+| `GET /api/season/<year>/<season>` | One season's charts, fetched on demand for the season picker |
 | `GET /api/autobrr/list` | The plaintext title list autobrr polls |
 | `GET /api/autobrr/tracked` | Tracked shows as JSON |
 | `POST /api/autobrr/track` | Track a show |
@@ -318,6 +363,14 @@ without building the image; the container itself runs 3.12.
   local database, so only the instant-refresh push is lost.
 - Secrets are masked in the settings UI and never sent to the browser in full.
 - CSV export was removed in v4 — the dashboard and `/api/results` replace it.
+- A failed airing fetch untracks nothing and seeds nothing from the airing side,
+  rather than falling back to the current season's chart — that fallback would
+  silently reintroduce the carryover blind spot the Airing page exists to fix.
+  The upcoming season is independent data and still seeds.
+- The season picker needs the last run's Shoko/Sonarr lookups at request time,
+  so the runner holds them in memory between runs (~25MB, nearly all of it the
+  mapping file that used to be re-parsed every run). They aren't written to
+  `results.json`, which the browser downloads whole on every Library load.
 - Fixed in 4.1: AniDB IDs were never loaded from the mapping file, so matching
   had been silently falling back to MAL alone. Expect the Shoko match rate to
   go up on the first run after upgrading.
@@ -338,7 +391,7 @@ without building the image; the container itself runs 3.12.
   percentage and the run history are unchanged — the new sections are additive,
   so nothing you were tracking moves.
 - New after 4.2.0: autobrr seeding now also draws on the upcoming season, and
-  the auto-track count applies **per season** rather than in total — so the
+  the auto-track count applies **per source** rather than in total — so the
   default of 10 now tracks up to 20 by popularity where it previously tracked
   10, plus any new season of something you own that ranked below the cutoff.
   Expect the list to grow on the first run after upgrading; drop
@@ -348,3 +401,14 @@ without building the image; the container itself runs 3.12.
   keeps whatever is already in its `config.json`** — defaults only apply to
   settings that aren't present. Change it on the settings page if you want the
   wider charts.
+- Fixed in 4.3: a tracked show was untracked as soon as Shoko had it, but Shoko
+  registers a series on its *first* episode — so autobrr stopped grabbing after
+  episode one for anything already in the mapping file. Ownership was also
+  blocking tracking entirely, which made split-cour sequels (mapped to the same
+  MAL ID as part one) impossible to track even by hand. Both are why a
+  carryover like *That Time I Got Reincarnated as a Slime* went missing.
+  `autobrr_tracked` gains `status`/`status_at` columns; existing databases are
+  migrated in place on first start.
+- Changed in 4.3: the current season's chart is no longer an auto-seed source —
+  the airing list supersedes it and sees carryovers the chart structurally
+  cannot. The upcoming season still seeds, unchanged.

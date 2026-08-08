@@ -71,6 +71,11 @@ class AutobrrSettings:
     list_id: str = ""
     enabled: bool = True
     auto_seed_limit: int = 10
+    # AniList flips a show to FINISHED when its last episode *airs*, which is
+    # hours before a release group posts it. Dropping on that flip would lose
+    # the finale of everything tracked, so incomplete shows get a grace window.
+    # 0 restores the drop-immediately behaviour.
+    finished_grace_days: int = 14
 
     @property
     def configured(self) -> bool:
@@ -89,6 +94,7 @@ class AutobrrSettings:
 class AniListSettings:
     url: str = "https://graphql.anilist.co"
     max_results: int = 1000
+    airing_max_results: int = 200
     min_popularity: int = 50000
     cache_max_age_hours: int = 24
     page_size: int = 50
@@ -514,11 +520,17 @@ def validate(settings: Settings):
     if not 1 <= settings.autobrr.auto_seed_limit <= 50:
         raise ValidationError("Auto-track count must be between 1 and 50")
 
+    if not 0 <= settings.autobrr.finished_grace_days <= 90:
+        raise ValidationError("Finished grace period must be between 0 and 90 days")
+
     if not croniter.is_valid(settings.schedule.cron):
         raise ValidationError(f"'{settings.schedule.cron}' is not a valid cron expression")
 
     if settings.anilist.max_results < 1:
         raise ValidationError("Max results must be at least 1")
+
+    if not 1 <= settings.anilist.airing_max_results <= 500:
+        raise ValidationError("Airing shows to track must be between 1 and 500")
 
     if settings.anilist.min_popularity < 0:
         raise ValidationError("Minimum popularity cannot be negative")

@@ -26,6 +26,10 @@
          href="{{ url_for('library') }}">
         <span class="nav-icon" aria-hidden="true">&#9776;</span> Library
       </a>
+      <a class="nav-item {% if request.endpoint == 'airing_page' %}is-active{% endif %}"
+         href="{{ url_for('airing_page') }}">
+        <span class="nav-icon" aria-hidden="true">&#9678;</span> Airing
+      </a>
       <a class="nav-item {% if request.endpoint == 'seasons_page' %}is-active{% endif %}"
          href="{{ url_for('seasons_page') }}">
         <span class="nav-icon" aria-hidden="true">&#9788;</span> Seasons

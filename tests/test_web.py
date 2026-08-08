@@ -78,6 +78,39 @@ def seed_results(ctx):
                 "trending": [], "score": [],
             },
         }],
+        "airing": {
+            "available": True, "count": 3, "long_runners": 1,
+            "fetched_at": "2026-01-01T00:00:00",
+            "entries": [
+                {"anilist_id": 10, "title": "Airing One", "title_alt": "",
+                 "owned": False, "mal_id": "10", "anidb_id": "",
+                 "rank": 1, "score": 80, "popularity": 5000, "image": "",
+                 "is_franchise_root": True, "sonarr_status": "unknown",
+                 "status": "RELEASING", "episodes_aired": 4,
+                 "episodes_local": 0, "is_long_runner": False,
+                 "season": "SUMMER", "season_year": 2026,
+                 "prequel_ids": [], "sequel_of_owned": False},
+                # Carried over from the previous season with Shoko partway
+                # through it - the shape that lost the Slime episode.
+                {"anilist_id": 11, "title": "Airing Two", "title_alt": "",
+                 "owned": True, "mal_id": "11", "anidb_id": "",
+                 "rank": 2, "score": 75, "popularity": 4000, "image": "",
+                 "is_franchise_root": False, "sonarr_status": "unknown",
+                 "status": "RELEASING", "episodes_aired": 18,
+                 "episodes_local": 12, "is_long_runner": False,
+                 "season": "SPRING", "season_year": 2026,
+                 "prequel_ids": [1], "sequel_of_owned": True},
+                {"anilist_id": 12, "title": "Long Runner", "title_alt": "",
+                 "owned": False, "mal_id": "12", "anidb_id": "",
+                 "rank": 3, "score": 70, "popularity": 3000, "image": "",
+                 "is_franchise_root": True, "sonarr_status": "unknown",
+                 "status": "RELEASING", "episodes_aired": 1100,
+                 "episodes_local": 0, "is_long_runner": True,
+                 "season": "FALL", "season_year": 1999,
+                 "prequel_ids": [], "sequel_of_owned": False},
+            ],
+        },
+        "current_season": {"season": "SUMMER", "year": 2026},
         "sonarr_enabled": False, "sonarr_available": False,
         "sonarr_error": None,
     }
@@ -306,6 +339,83 @@ def test_seasons_page_survives_results_from_before_the_feature(client, ctx):
     response = client.get("/seasons")
     assert response.status_code == 200
     assert b"collected on the next run" in response.data
+
+
+def test_airing_page_renders_the_airing_shows(client, ctx):
+    configure(ctx)
+    seed_results(ctx)
+
+    response = client.get("/airing")
+    assert response.status_code == 200
+    assert b"Airing One" in response.data
+    assert b"Not tracked" in response.data
+
+
+def test_airing_page_shows_an_empty_state_before_the_first_run(client, ctx):
+    configure(ctx)
+    response = client.get("/airing")
+    assert response.status_code == 200
+    assert b"No results yet" in response.data
+
+
+def test_airing_page_survives_results_from_before_the_feature(client, ctx):
+    """A results.json written by 4.2 has no airing key at all."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    del payload["airing"]
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    response = client.get("/airing")
+    assert response.status_code == 200
+    assert b"collected on the next run" in response.data
+
+
+def test_airing_page_says_so_when_anilist_could_not_be_reached(client, ctx):
+    """An empty list because of an outage reads very differently from an
+    empty list because nothing is airing."""
+    configure(ctx)
+    payload = seed_results(ctx)
+    payload["airing"] = {"available": False, "entries": [], "count": 0,
+                         "long_runners": 0, "fetched_at": "2026-01-01T00:00:00"}
+    ctx.storage.save_results(payload)
+    ctx.runner.load_cached_results()
+
+    response = client.get("/airing")
+    assert response.status_code == 200
+    assert b"Nothing was untracked" in response.data
+
+
+def test_browsing_an_invalid_season_is_rejected(client, ctx):
+    """Validated before any client is built, so this never touches AniList."""
+    configure(ctx)
+    response = client.get("/api/season/2019/AUTUMN")
+
+    assert response.status_code == 400
+    assert "not a season" in response.get_json()["error"]
+
+
+def test_browsing_an_implausible_year_is_rejected(client, ctx):
+    configure(ctx)
+    assert client.get("/api/season/1200/WINTER").status_code == 400
+    assert client.get("/api/season/3000/WINTER").status_code == 400
+
+
+def test_airing_page_marks_tracked_shows_server_side(client, ctx):
+    """Rendered with the right button state rather than flickering into it."""
+    configure(ctx)
+    seed_results(ctx)
+    ctx.storage.track_autobrr(10, "Airing One")
+
+    body = re.search(
+        r'id="airing-data">(.*?)</script>',
+        client.get("/airing").data.decode(), re.S,
+    ).group(1)
+    entries = json.loads(body)["entries"]
+
+    tracked = {e["anilist_id"]: e["autobrr_tracked"] for e in entries}
+    assert tracked[10] is True
+    assert tracked[11] is False
 
 
 def test_library_page_hides_the_sonarr_column_when_sonarr_is_off(client, ctx):

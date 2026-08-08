@@ -6,6 +6,7 @@ rules can be unit tested directly.
 
 import math
 import re
+from datetime import date
 
 from core.models import (
     SONARR_MISSING,
@@ -26,6 +27,13 @@ TVDB_URL_RE = re.compile(r"/series/(\d+)")
 MAL_URL_RE = re.compile(r"/anime/(\d+)")
 
 GB = 1024 ** 3
+
+# What counts as a perpetual serial rather than a normal cour. Both floors are
+# high on purpose: `episodes` is also null on an ordinary new season AniList
+# hasn't confirmed a length for, and mistaking one of those for One Piece would
+# quietly stop it being auto-tracked.
+LONG_RUNNER_EPISODES = 100
+LONG_RUNNER_AGE_YEARS = 2
 
 
 def _as_list(value):
@@ -201,6 +209,94 @@ def extract_shoko_ids(shoko_series, mappings=None):
     """The ID sets alone, for callers that don't need the per-series rows."""
     _, mal_ids, anidb_ids, tvdb_ids = build_shoko_index(shoko_series, mappings)
     return mal_ids, anidb_ids, tvdb_ids
+
+
+def extract_shoko_episode_counts(shoko_series):
+    """MAL ID -> local episodes, and AniDB ID -> local episodes.
+
+    Keyed by both because ownership matches on either. Counts are summed per
+    key: a split-cour show is often two Shoko series carrying the same MAL ID,
+    and "have 5 of 24" wants both halves. A single series carrying several
+    AniDB IDs has its whole count attributed to each, which over-reports rather
+    than under-reports - the alternative is inventing a split no API exposes.
+
+    Returns (by_mal, by_anidb).
+    """
+    by_mal, by_anidb = {}, {}
+
+    for series in shoko_series:
+        episodes = shoko_episode_count(series)
+        if not episodes:
+            continue
+
+        # The TVDB crossref is irrelevant here, so the mapping isn't needed.
+        mal_ids, anidb_ids, _ = _shoko_series_ids(series, {})
+
+        for value in mal_ids:
+            by_mal[value] = by_mal.get(value, 0) + episodes
+        for value in anidb_ids:
+            by_anidb[value] = by_anidb.get(value, 0) + episodes
+
+    return by_mal, by_anidb
+
+
+def aired_episodes(media):
+    """How many episodes have aired, or None when it can't be told.
+
+    nextAiringEpisode gives the *next* episode number, so one fewer has aired.
+    It goes null between cours and for shows with no published schedule; a
+    finished show's total is exact, so use that. Everything else is unknown -
+    guessing "0 aired" would read as "nothing is out yet" for a show that is
+    nine episodes in.
+    """
+    upcoming = media.get("nextAiringEpisode") or {}
+    episode = _as_int(upcoming.get("episode"))
+    if episode:
+        return max(episode - 1, 0)
+
+    if media.get("status") == "FINISHED":
+        return _as_int(media.get("episodes"))
+
+    return None
+
+
+def is_long_runner(media, today_year=None):
+    """A perpetual weekly serial - One Piece, Conan, Sazae-san.
+
+    Two signals, either sufficient: no announced episode total plus a very high
+    aired count, or no announced total plus a start year well in the past. Both
+    have to allow for `episodes` being null on an ordinary cour AniList hasn't
+    confirmed a length for yet, which is why the floors are deliberately high.
+    """
+    if media.get("episodes") is not None:
+        return False
+
+    if (aired_episodes(media) or 0) >= LONG_RUNNER_EPISODES:
+        return True
+
+    start_year = _as_int((media.get("startDate") or {}).get("year"))
+    if start_year is None:
+        return False
+
+    today_year = today_year if today_year is not None else date.today().year
+    return start_year <= today_year - LONG_RUNNER_AGE_YEARS
+
+
+def is_complete(entry):
+    """Whether Shoko has every episode of this show that has aired.
+
+    Falls back to plain ownership when the aired count is unknown, which is
+    both the pre-4.3 rule and the right answer when AniList won't say - the
+    alternative is reporting a complete show as incomplete forever.
+    """
+    if not entry.get("owned"):
+        return False
+
+    expected = entry.get("episodes_aired")
+    if expected is None:
+        return True
+
+    return (entry.get("episodes_local") or 0) >= expected
 
 
 def count_shoko_episodes(shoko_series):
@@ -404,7 +500,7 @@ def sonarr_status(tvdb_id, tvdb_season, index, available=True):
 
 def _build_entry(media, mapping, mal_ids, anidb_ids,
                  sonarr_index=None, sonarr_available=False, rank=None,
-                 owned_ids=None):
+                 owned_ids=None, local_by_mal=None, local_by_anidb=None):
     """Turn one AniList media object plus its mapping row into an Entry."""
     mapping = mapping or {}
 
@@ -418,6 +514,14 @@ def _build_entry(media, mapping, mal_ids, anidb_ids,
 
     owned = matches_shoko(mal_id, anidb_id, mal_ids, anidb_ids)
 
+    # Max rather than sum: one Shoko series exports both a MAL and an AniDB ID,
+    # so adding the two lookups would double every count.
+    episodes_local = max(
+        (local_by_mal or {}).get(str(mal_id), 0) if mal_id else 0,
+        (local_by_anidb or {}).get(str(anidb_id), 0) if anidb_id else 0,
+    )
+
+    upcoming = media.get("nextAiringEpisode") or {}
     title = title_of(media)
 
     # One walk, two readings, and they differ on purpose. Being a franchise
@@ -456,12 +560,18 @@ def _build_entry(media, mapping, mal_ids, anidb_ids,
         sonarr_status=sonarr_status(
             tvdb_id, tvdb_season, sonarr_index, sonarr_available
         ),
+        episodes_aired=aired_episodes(media),
+        episodes_local=episodes_local,
+        season=media.get("season") or "",
+        season_year=_as_int(media.get("seasonYear")),
+        next_airing_at=_as_int(upcoming.get("airingAt")),
+        is_long_runner=is_long_runner(media),
     )
 
 
 def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings,
                         sonarr_index=None, sonarr_available=False,
-                        owned_ids=None):
+                        owned_ids=None, local_by_mal=None, local_by_anidb=None):
     """Match the AniList list against the Shoko library, and against Sonarr."""
     log.info("Comparing %s AniList entries against the Shoko library", len(anilist))
 
@@ -479,7 +589,9 @@ def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings,
 
         entry = _build_entry(media, mapping, mal_ids, anidb_ids,
                              sonarr_index, sonarr_available,
-                             owned_ids=owned_ids)
+                             owned_ids=owned_ids,
+                             local_by_mal=local_by_mal,
+                             local_by_anidb=local_by_anidb)
 
         # Several AniList entries can map to one MAL ID; keep the best-ranked.
         existing = by_mal.get(entry.mal_id)
@@ -494,7 +606,7 @@ def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings,
 
 def build_season_entries(media_list, mappings, mal_ids, anidb_ids,
                          sonarr_index=None, sonarr_available=False, limit=20,
-                         owned_ids=None):
+                         owned_ids=None, local_by_mal=None, local_by_anidb=None):
     """Rank one season's media, keeping entries the mapping doesn't know yet.
 
     Deliberately skips the popularity floor and the mapping requirement that
@@ -515,6 +627,7 @@ def build_season_entries(media_list, mappings, mal_ids, anidb_ids,
             media, mappings.get(anilist_id), mal_ids, anidb_ids,
             sonarr_index, sonarr_available, rank=len(entries) + 1,
             owned_ids=owned_ids,
+            local_by_mal=local_by_mal, local_by_anidb=local_by_anidb,
         ))
 
         if len(entries) >= limit:

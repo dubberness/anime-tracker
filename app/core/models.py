@@ -43,6 +43,19 @@ class Entry:
     tvdb_season: Optional[int] = None
     sonarr_status: str = SONARR_UNKNOWN
 
+    # -- airing --
+    # `status` above is AniList's RELEASING/FINISHED/NOT_YET_RELEASED. These
+    # add the detail needed to tell "still coming" from "done", which is what
+    # the autobrr lifecycle turns on.
+    episodes_aired: Optional[int] = None   # AniList: how many have aired
+    episodes_local: int = 0                # Shoko: how many are on disk
+    # AniList's *start* season, which is not necessarily the one it is airing
+    # in - a two-cour Spring show is still tagged SPRING all through Summer.
+    season: str = ""
+    season_year: Optional[int] = None
+    next_airing_at: Optional[int] = None   # unix ts of the next episode
+    is_long_runner: bool = False
+
     def to_dict(self):
         return asdict(self)
 

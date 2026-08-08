@@ -73,10 +73,44 @@
     unknown:  '<span class="pill pill-muted">&mdash;</span>'
   };
 
-  /* The autobrr cell only appears on the seasons page. A show already in
-     Shoko has nothing to grab, so it gets a dash rather than a dead button. */
-  function autobrrCell(entry) {
-    if (entry.owned) {
+  /* Mirrors core.compare.is_complete. Falling back to plain ownership when the
+     aired count is missing is what keeps results.json files written before the
+     episode counts existed rendering exactly as they used to. */
+  function isComplete(entry) {
+    if (!entry.owned) return false;
+    if (entry.episodes_aired == null) return true;
+    return (entry.episodes_local || 0) >= entry.episodes_aired;
+  }
+
+  /* "5 of 12" with a thin progress bar. The total falls back to the announced
+     episode count when nothing has been confirmed as aired yet, and disappears
+     entirely when neither is known - a bare "5" beats inventing a denominator. */
+  function episodeCell(entry) {
+    const have = entry.episodes_local || 0;
+    const total = entry.episodes_aired != null ? entry.episodes_aired : entry.episodes;
+
+    if (total == null) return `<td class="num">${have || "-"}</td>`;
+
+    const pct = total > 0 ? Math.min(100, Math.round((have / total) * 100)) : 0;
+    const label = entry.episodes_aired != null ? "aired so far" : "announced";
+
+    return `<td class="num" title="${have} of ${total} ${label}">
+      ${have} of ${total}
+      <span class="meter-track"><span class="meter-fill" style="width:${pct}%"></span></span>
+    </td>`;
+  }
+
+  /* `mode` is false (no column at all), "track" (the button) or "readonly"
+     (state only - a past season nothing can be done about).
+
+     Owning an earlier cour is deliberately not treated as "nothing to grab":
+     a split-cour sequel maps to the same MAL ID as part one, so the old
+     owned-means-dash rule made exactly those impossible to track by hand. */
+  function autobrrCell(entry, mode) {
+    if (isComplete(entry)) {
+      return '<td><span class="pill pill-good">&#10003; Complete</span></td>';
+    }
+    if (mode === "readonly") {
       return '<td><span class="pill pill-muted">&mdash;</span></td>';
     }
 
@@ -100,9 +134,9 @@
     NOT_YET_RELEASED: '<span class="sub-link" title="Announced, not airing yet">&middot; upcoming</span>'
   };
 
-  /* One row shape shared by the library and seasons tables - both are the same
-     "an AniList entry, and where it lives" list. */
-  function entryRow(entry, withSonarr, withAutobrr) {
+  /* One row shape shared by the library, seasons and airing tables - all three
+     are the same "an AniList entry, and where it lives" list. */
+  function entryRow(entry, withSonarr, autobrrMode, withEpisodes) {
     const mal = entry.mal_id
       ? `<a class="sub-link" href="https://myanimelist.net/anime/${escapeHtml(entry.mal_id)}" target="_blank" rel="noopener">MAL</a>
          <span class="sub-link">&middot;</span>`
@@ -130,11 +164,12 @@
         </td>
         <td class="num">${entry.score || "-"}</td>
         <td class="num">${formatNumber(entry.popularity)}</td>
+        ${withEpisodes ? episodeCell(entry) : ""}
         <td>${entry.owned
           ? '<span class="pill pill-good">&#10003; In Shoko</span>'
           : '<span class="pill pill-muted">Missing</span>'}</td>
         ${sonarr}
-        ${withAutobrr ? autobrrCell(entry) : ""}
+        ${autobrrMode ? autobrrCell(entry, autobrrMode) : ""}
       </tr>
     `;
   }
@@ -625,6 +660,170 @@
   };
 
   // ==========================
+  // Airing page
+  // ==========================
+
+  /* Everything AniList marks as airing, whichever season it started in. The
+     run has already fetched all of it, so filtering is a re-render rather than
+     a request - same idea as the seasons page. */
+  const Airing = {
+    entries: [],
+    filtered: [],
+    current: {},
+    filter: "all",
+    query: "",
+    showLongRunners: false,
+    sonarr: false,
+
+    init() {
+      const body = $("#airing-body");
+      const source = $("#airing-data");
+      if (!body || !source) return;
+
+      const table = $("#airing-table");
+      this.sonarr = !!(table && table.dataset.sonarr);
+
+      try {
+        const data = JSON.parse(source.textContent) || {};
+        this.entries = data.entries || [];
+        this.current = data.current_season || {};
+      } catch (err) {
+        body.innerHTML = tableMessage(table, "The airing data could not be read.");
+        return;
+      }
+
+      const search = $("#airing-search");
+      if (search) {
+        let debounce;
+        search.addEventListener("input", () => {
+          clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            this.query = search.value.toLowerCase().trim();
+            this.apply();
+          }, 140);
+        });
+      }
+
+      $$("#airing-filters button").forEach(button => {
+        button.addEventListener("click", () => {
+          $$("#airing-filters button").forEach(b => b.classList.remove("is-active"));
+          button.classList.add("is-active");
+          this.filter = button.dataset.filter;
+          this.apply();
+        });
+      });
+
+      const longRunners = $("#airing-long-runners");
+      if (longRunners) {
+        longRunners.addEventListener("change", () => {
+          this.showLongRunners = longRunners.checked;
+          this.apply();
+        });
+      }
+
+      // Delegated: the body is re-rendered on every toggle.
+      body.addEventListener("click", event => {
+        const button = event.target.closest(".track-toggle");
+        if (button) this.toggle(button);
+      });
+
+      this.apply();
+    },
+
+    /* A show whose start season isn't the current one is still airing now -
+       the two-cour case the seasonal charts lose track of. The current season
+       comes from the server so the client never does date maths. */
+    isCarryover(entry) {
+      if (!entry.season_year || !this.current.year) return false;
+      return entry.season !== this.current.season ||
+             entry.season_year !== this.current.year;
+    },
+
+    matches(entry) {
+      switch (this.filter) {
+        case "untracked":  return !isComplete(entry) && !entry.autobrr_tracked;
+        case "tracked":    return !!entry.autobrr_tracked;
+        case "sequel":     return !!entry.sequel_of_owned;
+        case "carryover":  return this.isCarryover(entry);
+        // Unknown-aired is deliberately excluded: a show on a cour break has
+        // no aired count, and calling that "incomplete" would be a guess.
+        case "incomplete": return entry.episodes_aired != null &&
+                                  (entry.episodes_local || 0) < entry.episodes_aired;
+        default:           return true;
+      }
+    },
+
+    apply() {
+      this.filtered = this.entries.filter(entry => {
+        if (entry.is_long_runner && !this.showLongRunners) return false;
+        if (!this.matches(entry)) return false;
+        if (this.query && entry.title.toLowerCase().indexOf(this.query) === -1) return false;
+        return true;
+      });
+      this.render();
+    },
+
+    setTracked(anilistId, tracked) {
+      this.entries.forEach(entry => {
+        if (entry.anilist_id === anilistId) entry.autobrr_tracked = tracked;
+      });
+    },
+
+    async toggle(button) {
+      const anilistId = Number(button.dataset.anilistId);
+      const tracked = button.classList.contains("is-tracked");
+      const next = !tracked;
+
+      button.disabled = true;
+      this.setTracked(anilistId, next);
+      this.apply();
+
+      try {
+        if (next) {
+          await api("/api/autobrr/track", {
+            method: "POST",
+            body: {
+              anilist_id: anilistId,
+              title: button.dataset.title,
+              title_alt: button.dataset.titleAlt,
+              mal_id: button.dataset.malId,
+              anidb_id: button.dataset.anidbId
+            }
+          });
+          toast(`Tracking "${button.dataset.title}" for autobrr`, "success");
+        } else {
+          const data = await api(`/api/autobrr/track/${anilistId}`, { method: "DELETE" });
+          toast(data.excluded
+            ? "Untracked - it won't be auto-added again"
+            : "Untracked", "success");
+        }
+      } catch (err) {
+        this.setTracked(anilistId, tracked);
+        this.apply();
+        toast(err.message, "error");
+      }
+    },
+
+    render() {
+      const body = $("#airing-body");
+      if (!body) return;
+
+      body.innerHTML = this.filtered.length
+        ? this.filtered.map(entry => entryRow(entry, this.sonarr, "track", true)).join("")
+        : tableMessage($("#airing-table"), "Nothing matches those filters.");
+
+      const summary = $("#airing-summary");
+      if (summary) {
+        const untracked = this.entries.filter(
+          e => !e.is_long_runner && !isComplete(e) && !e.autobrr_tracked
+        ).length;
+        summary.textContent =
+          `${this.filtered.length} showing · ${untracked} not tracked`;
+      }
+    }
+  };
+
+  // ==========================
   // Seasons page
   // ==========================
 
@@ -660,6 +859,8 @@
       this.bind("#season-sorts", button => {
         this.sort = button.dataset.sort;
       });
+
+      this.initPicker();
 
       // Delegated: the body is re-rendered on every toggle, so per-button
       // listeners would be rebound constantly.
@@ -730,6 +931,104 @@
       });
     },
 
+    /* The run only fetches the current season and the one either side, so
+       anything further back is fetched on demand. */
+    initPicker() {
+      const button = $("#picker-load");
+      const yearSelect = $("#picker-year");
+      const seasonSelect = $("#picker-season");
+      if (!button || !yearSelect || !seasonSelect) return;
+
+      const now = new Date();
+      for (let year = now.getFullYear() + 1; year >= 1960; year--) {
+        const option = document.createElement("option");
+        option.value = String(year);
+        option.textContent = String(year);
+        yearSelect.appendChild(option);
+      }
+      yearSelect.value = String(now.getFullYear());
+      seasonSelect.selectedIndex = Math.floor(now.getMonth() / 3);
+
+      button.addEventListener("click", () => {
+        this.loadOn(Number(yearSelect.value), seasonSelect.value, button);
+      });
+    },
+
+    async loadOn(year, season, button) {
+      const note = $("#picker-note");
+      const label = button ? button.textContent : "";
+
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Loading...";
+      }
+      if (note) note.textContent = "";
+
+      try {
+        const data = await api(`/api/season/${year}/${season}`);
+
+        // Replace rather than append when the same season is browsed twice,
+        // or the tab strip grows a duplicate on every click.
+        const existing = this.blocks.findIndex(
+          b => b.browsed && b.season === data.season && b.year === data.year
+        );
+        const block = {
+          season: data.season,
+          year: data.year,
+          label: data.label,
+          is_current: false,
+          browsed: true,
+          trackable: data.trackable,
+          sorts: data.sorts
+        };
+
+        if (existing >= 0) {
+          this.blocks[existing] = block;
+          this.index = existing;
+        } else {
+          this.blocks.push(block);
+          this.index = this.blocks.length - 1;
+          this.addTab(block, this.index);
+        }
+
+        this.syncTabs();
+        this.render();
+
+        if (note && !data.ownership_known) {
+          note.textContent = "No run yet - Shoko and Sonarr columns are blank.";
+        }
+      } catch (err) {
+        toast(err.message, "error");
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = label;
+        }
+      }
+    },
+
+    addTab(block, index) {
+      const tabs = $("#season-tabs");
+      if (!tabs) return;
+
+      const tab = document.createElement("button");
+      tab.dataset.season = String(index);
+      tab.textContent = block.label;
+      tab.addEventListener("click", () => {
+        this.index = index;
+        this.syncTabs();
+        this.render();
+      });
+      tabs.appendChild(tab);
+    },
+
+    syncTabs() {
+      $$("#season-tabs button").forEach(tab => {
+        tab.classList.toggle("is-active",
+                             Number(tab.dataset.season) === this.index);
+      });
+    },
+
     render() {
       const body = $("#season-body");
       if (!body) return;
@@ -737,14 +1036,19 @@
       const block = this.blocks[this.index] || {};
       const entries = (block.sorts && block.sorts[this.sort]) || [];
 
+      // A browsed past season has nothing left to grab, so it renders state
+      // without buttons. Enforced here rather than in the API, which stays
+      // generic so obscure shows can still be tracked by hand.
+      const mode = block.browsed && !block.trackable ? "readonly" : "track";
+
       body.innerHTML = entries.length
-        ? entries.map(entry => entryRow(entry, this.sonarr, true)).join("")
+        ? entries.map(entry => entryRow(entry, this.sonarr, mode, true)).join("")
         : tableMessage($("#season-table"), "AniList has nothing listed for this season yet.");
 
       const summary = $("#season-summary");
       if (summary) {
         const owned = entries.filter(e => e.owned).length;
-        const tracked = entries.filter(e => !e.owned && e.autobrr_tracked).length;
+        const tracked = entries.filter(e => e.autobrr_tracked).length;
         summary.textContent = entries.length
           ? `${owned}/${entries.length} in Shoko · ${tracked} tracked`
           : "";
@@ -966,6 +1270,7 @@
     Settings.init();
     Logs.init();
     Library.init();
+    Airing.init();
     Seasons.init();
 
     $$("[data-collapse]").forEach(el => Collapse.init(el));
