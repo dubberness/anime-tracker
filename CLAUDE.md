@@ -11,6 +11,23 @@ with an in-process scheduler (`croniter`, no cron daemon) and a built-in
 dashboard. Configuration is entirely through the web UI — nothing is meant to
 be hand-edited beyond initial deployment.
 
+## Starting work
+
+**Always branch from a freshly fetched `origin/main`, never from whatever is
+checked out.** Feature branches here are merged via PR and then left behind, so
+the checked-out branch is usually a dead one several days stale.
+
+```bash
+git fetch origin && git checkout -b <name> origin/main
+```
+
+`git status`, `git branch` and `git log` are all local-only and report a stale
+clone as perfectly healthy — a clean tree says nothing about whether `main` has
+moved. This has already cost one full rebuild of a feature: work branched off a
+merged branch duplicated `sequel_of_owned`, `matches_shoko` and the
+`_shoko_series_ids` extraction that this file already warned against forking,
+because this file was itself in the unfetched commits.
+
 ## Commands
 
 ```bash
@@ -60,14 +77,20 @@ tests/             pytest suite, mirrors app/ modules
 ```
 
 **Data flow of a run** (`Runner._execute` in `app/runner.py`): load ID
-mappings → fetch AniList list → fetch Shoko library → `build_shoko_index`
-(per-series rows *and* the MAL/AniDB/TVDB sets, one walk) → refresh/prune
+mappings → fetch AniList list → fetch what's airing (`status: RELEASING`) →
+fetch Shoko library → `build_shoko_index` (per-series rows *and* the
+MAL/AniDB/TVDB sets, one walk) + `extract_shoko_episode_counts` → refresh
 autobrr-tracked rows → fetch Sonarr (optional) → `annotate_shoko_sonarr` fills
 the Shoko rows' Sonarr status → compare everything (`core/compare.py`) → build
 stats/tiers/decades/genres/diff (`core/stats.py`) → build seasonal charts
-(`core/seasons.py`) → auto-seed autobrr tracking → persist a single JSON
-payload via `storage.py` and update run history. `RunState` prevents two runs
-happening concurrently (`try_begin`/`finish`).
+(`core/seasons.py`) → record statuses, prune and auto-seed autobrr tracking →
+persist a single JSON payload via `storage.py` and update run history.
+`RunState` prevents two runs happening concurrently (`try_begin`/`finish`).
+
+Pruning runs in the **autobrr** phase, not the Shoko one, because the decision
+turns on AniList status rather than ownership alone. `_record_statuses` runs
+immediately before it so the grace clock starts on the run a finish is first
+seen, not the one after.
 
 Shoko is read *before* Sonarr and the phase order is load-bearing (`state.PHASES`
 and the progress UI follow it), which is why the Shoko rows learn their Sonarr
@@ -141,21 +164,50 @@ when touching these paths:
 
 **Autobrr integration**: the app doesn't configure autobrr's indexers or
 filters — it only maintains a plaintext title list (`GET /api/autobrr/list`,
-unauthenticated by design so autobrr can poll it) of currently-airing shows
-Shoko is missing. Auto-tracked entries are re-pruned once Shoko has them;
-manually-untracked entries are remembered so auto-seed doesn't re-add them
-(`core/autobrr.py`, `storage.py` tracked-rows table).
+unauthenticated by design so autobrr can poll it). Manually-untracked entries
+are remembered so auto-seed doesn't re-add them (`core/autobrr.py`,
+`storage.py` tracked-rows table).
 
-`auto_seed_candidates` takes the **whole seasons list**, not a block, and
-`seed_blocks` picks the current and upcoming ones. Both callers
+**Airing is a status, not a season.** AniList tags media with the season it
+*started* in, so a two-cour show drops off the current chart halfway through
+its run while still going out weekly. `clients/anilist.py::fetch_airing`
+queries `status: RELEASING` instead, and that list — not the current season's
+chart — is what seeds tracking. Don't reintroduce the current-season block as a
+seed source; it structurally cannot see a carryover, which is how an airing
+show went untracked in the first place.
+
+**Ownership is not doneness.** Shoko registers a series on its *first* episode,
+so `owned` means "started", not "finished". `compare.is_complete` (aired
+episodes vs `extract_shoko_episode_counts`) is the real test, and it falls back
+to plain `owned` when the aired count is unknown so pre-4.3 payloads render
+unchanged. Owning an earlier cour must never block tracking: a split-cour part
+two is a separate AniList entry mapped to part one's MAL ID.
+
+`should_stay_tracked` in `core/autobrr.py` is the whole lifecycle in one pure
+function, returning `(keep, reason)` so no untrack is mysterious in the log.
+Two invariants there are load-bearing: **a `None` status always keeps** (an
+AniList outage handing autobrr an empty list would silently stop every grab),
+and **every drop uses `exclude=False`** (an aged-out show must stay
+re-trackable). The grace window exists because AniList flips to `FINISHED` when
+the finale *airs*, hours before a release group posts it.
+
+`auto_seed_candidates(airing, seasons, ...)` takes the airing entries **and**
+the whole seasons list; `upcoming_blocks` picks only the upcoming one, since
+the airing list already covers the current season and more. Both callers
 (`Runner._auto_seed_tracked` and `server._auto_seed_ids`) must go through it:
 `_auto_seed_ids` is what decides whether untracking also records an exclusion,
 so if the two ever disagreed about which shows are auto-picks, the next run
-would silently re-add something the user removed. `auto_seed_limit` is the top-N
-**per block**, not shared: each block contributes its top `limit`, then any
+would silently re-add something the user removed. `auto_seed_limit` is the
+top-N **per source**, not shared: each contributes its top `limit`, then any
 `sequel_of_owned` entry ranked *below* that cutoff is added as well. A sequel
 inside the cutoff is just one of the N and consumes a slot — there is no
 reordering. A limit of 0 means "track nothing at all", sequels included.
+Long-runners (`compare.is_long_runner`) are never auto-seeded.
+
+The season picker (`GET /api/season/<year>/<season>`) needs the last run's
+Shoko/Sonarr lookups at request time, so `Runner` holds a `LookupContext`
+between runs behind a lock. Don't move that into `results.json` — the browser
+downloads that whole payload on every Library load.
 
 ## Conventions
 
