@@ -107,11 +107,25 @@ def test_auto_seed_tracks_an_airing_show_shoko_only_partly_has(runtime):
     assert storage.autobrr_tracked_ids() == {1}
 
 
-def test_auto_seed_skips_a_complete_show(runtime):
+def test_auto_seed_keeps_a_caught_up_show_that_is_still_airing(runtime):
+    """Caught up is not finished - next week's episode is still coming."""
     runner, storage = make_runner(runtime)
 
     added = runner._auto_seed_tracked(
-        [airing_entry(1, "Done", "100", owned=True, aired=12, local=12)],
+        [airing_entry(1, "Slime", "100", owned=True, aired=17, local=17)],
+        [], limit=10,
+    )
+
+    assert added == 1
+    assert storage.autobrr_tracked_ids() == {1}
+
+
+def test_auto_seed_skips_a_finished_show_shoko_has_complete(runtime):
+    runner, storage = make_runner(runtime)
+
+    added = runner._auto_seed_tracked(
+        [airing_entry(1, "Done", "100", owned=True, aired=12, local=12,
+                      status="FINISHED")],
         [], limit=10,
     )
 

@@ -176,12 +176,29 @@ chart — is what seeds tracking. Don't reintroduce the current-season block as 
 seed source; it structurally cannot see a carryover, which is how an airing
 show went untracked in the first place.
 
-**Ownership is not doneness.** Shoko registers a series on its *first* episode,
-so `owned` means "started", not "finished". `compare.is_complete` (aired
-episodes vs `extract_shoko_episode_counts`) is the real test, and it falls back
-to plain `owned` when the aired count is unknown so pre-4.3 payloads render
-unchanged. Owning an earlier cour must never block tracking: a split-cour part
-two is a separate AniList entry mapped to part one's MAL ID.
+**Ownership is not doneness, and neither is being caught up.** Three distinct
+states — collapsing any two of them has already caused a bug:
+
+| state | means | check |
+|---|---|---|
+| `owned` | Shoko has *at least one* episode | `matches_shoko` |
+| complete | Shoko has every episode that has **aired so far** | `compare.is_complete` |
+| done | complete **and** nothing more is coming | `autobrr.is_done` |
+
+Shoko registers a series on its first episode, so `owned` means "started".
+`is_complete` falls back to plain `owned` when the aired count is unknown, so
+pre-4.3 payloads render unchanged. Owning an earlier cour must never block
+tracking: a split-cour part two is a separate AniList entry mapped to part
+one's MAL ID.
+
+**Only `is_done` may gate seeding or hide the Track button.** A weekly show is
+"complete" every week between the latest episode landing and the next one
+airing — gating on `is_complete` silently dropped caught-up shows off the list
+and left no way to re-add them by hand. `STILL_COMING` (`RELEASING`,
+`NOT_YET_RELEASED`, `HIATUS`) is what keeps them trackable; an unrecognised or
+missing status is deliberately excluded so older payloads behave as before.
+`app.js` mirrors all three (`isComplete` / `isDone` / `STILL_COMING`) — change
+both sides together.
 
 `should_stay_tracked` in `core/autobrr.py` is the whole lifecycle in one pure
 function, returning `(keep, reason)` so no untrack is mysterious in the log.
