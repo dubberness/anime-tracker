@@ -24,7 +24,12 @@ class Scheduler:
         self.state = run_state
         self._stop = threading.Event()
         self._thread = None
+        # Two expressions, deliberately: `_current_cron` is what the user
+        # configured and is only ever compared against the live setting to spot
+        # an edit, while `_resolved_cron` is what croniter is actually driven
+        # by. They differ exactly when the configured value is invalid.
         self._current_cron = None
+        self._resolved_cron = FALLBACK_CRON
         self._next_run = None
 
     # -- lifecycle --
@@ -57,9 +62,13 @@ class Scheduler:
 
     def _schedule_next(self, now=None):
         now = now or datetime.now()
-        expression = self._resolve_cron()
-        self._current_cron = expression
-        self._next_run = croniter(expression, now).get_next(datetime)
+        # Recorded as configured, not as resolved. Storing the fallback under
+        # `_current_cron` would never match settings.schedule.cron again, so
+        # every tick would read as "the schedule changed", reschedule and
+        # `continue` - and a run would never actually fire.
+        self._current_cron = self.config.settings.schedule.cron
+        self._resolved_cron = self._resolve_cron()
+        self._next_run = croniter(self._resolved_cron, now).get_next(datetime)
         self.state.set_next_run(self._next_run)
         log.info("Next scheduled run: %s", self._next_run.strftime("%Y-%m-%d %H:%M:%S"))
         return self._next_run
@@ -86,7 +95,7 @@ class Scheduler:
 
             # A clock jump backwards (DST, NTP correction) would otherwise
             # leave the next run stranded far in the future.
-            if (self._next_run - now).total_seconds() > _max_gap(self._current_cron):
+            if (self._next_run - now).total_seconds() > _max_gap(self._resolved_cron):
                 log.warning("Clock moved backwards - recomputing the schedule")
                 self._schedule_next(now)
                 continue

@@ -53,10 +53,14 @@
     return payload;
   }
 
+  /* Safe for both text and double-quoted attribute values.
+     The textContent round-trip alone escapes & < > but leaves quotes intact,
+     which breaks out of every data-* attribute below: `Say "I love you".` is a
+     real AniList title, and it made the Track button send `Say ` to autobrr. */
   function escapeHtml(value) {
     const div = document.createElement("div");
     div.textContent = value == null ? "" : String(value);
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   function formatNumber(value) {

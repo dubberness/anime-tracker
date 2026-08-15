@@ -587,13 +587,13 @@ def _register_api(app, ctx):
                 lookups.sonarr_index if lookups else {},
                 lookups.sonarr_available if lookups else False,
                 per_page,
+                # Without this the "New season" flag is silently always false
+                # here, since _build_entry has nothing to resolve prequels
+                # against. The run computes the same set - see LookupContext.
+                lookups.owned_ids if lookups else None,
                 local_by_mal=lookups.local_by_mal if lookups else None,
                 local_by_anidb=lookups.local_by_anidb if lookups else None,
             )
-            if lookups:
-                compare.annotate_sequels(
-                    entries, lookups.mappings, lookups.mal_ids, lookups.anidb_ids
-                )
 
             sorts[key] = [
                 dict(entry.to_dict(),

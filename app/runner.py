@@ -35,6 +35,11 @@ class LookupContext:
     mappings: dict = field(default_factory=dict)
     mal_ids: set = field(default_factory=set)
     anidb_ids: set = field(default_factory=set)
+    # The library resolved into AniList IDs, so the season picker can answer
+    # "is this a new season of something I own?" without rebuilding it. Derived
+    # from mal_ids/anidb_ids, so it is carried rather than recomputed - the walk
+    # is over every row of the mapping file and this is a per-request path.
+    owned_ids: set = field(default_factory=set)
     local_by_mal: dict = field(default_factory=dict)
     local_by_anidb: dict = field(default_factory=dict)
     sonarr_index: dict = field(default_factory=dict)
@@ -517,6 +522,7 @@ class Runner:
             mappings=mapping_lookup,
             mal_ids=mal_ids,
             anidb_ids=anidb_ids,
+            owned_ids=owned_ids,
             local_by_mal=local_by_mal,
             local_by_anidb=local_by_anidb,
             sonarr_index=sonarr_index,
