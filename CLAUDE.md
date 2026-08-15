@@ -236,10 +236,16 @@ downloads that whole payload on every Library load.
 - Broad `except Exception` blocks in `runner.py`/`main.py` are intentional
   (annotated `# noqa: BLE001`) and paired with a comment explaining why that
   specific failure must not propagate — match that style rather than
-  narrowing them reflexively.
+  narrowing them reflexively. `BLE` is in ruff's `select`, so a new blind
+  catch fails CI until it is annotated: the noqa is the deliberate opt-in, not
+  decoration.
 - Secrets (API keys) are masked on `GET /api/settings` and never sent to the
   browser in full; preserve that when touching settings serialization.
 - ruff config lives in `pyproject.toml`: `select = ["E", "W", "F", "I", "B",
-  "C4"]`, line length 100, first-party import groups listed under
+  "C4", "BLE"]`, line length 100, first-party import groups listed under
   `[tool.ruff.lint.isort]` — add new top-level `app/` modules there if you
   create one.
+- Mutating endpoints all carry `@_require_json`, including `POST /api/run`. It
+  is the app's only CSRF guard: a form-encoded cross-origin POST needs no
+  preflight, so an endpoint without it can be triggered by any page the user
+  visits on the LAN.

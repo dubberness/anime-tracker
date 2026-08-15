@@ -517,8 +517,11 @@ def validate(settings: Settings):
     if settings.autobrr.url and not settings.autobrr.url.startswith(("http://", "https://")):
         raise ValidationError("Autobrr URL must start with http:// or https://")
 
-    if not 1 <= settings.autobrr.auto_seed_limit <= 50:
-        raise ValidationError("Auto-track count must be between 1 and 50")
+    # 0 is the documented off switch - auto_seed_candidates returns nothing at
+    # all for it, sequels included - so the validator has to admit it or the
+    # only way to stop auto-seeding is to hand-edit config.json.
+    if not 0 <= settings.autobrr.auto_seed_limit <= 50:
+        raise ValidationError("Auto-track count must be between 0 and 50")
 
     if not 0 <= settings.autobrr.finished_grace_days <= 90:
         raise ValidationError("Finished grace period must be between 0 and 90 days")

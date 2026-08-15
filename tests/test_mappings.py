@@ -60,3 +60,43 @@ def test_a_missing_file_raises(settings):
     settings.path = settings.path + ".nope"
     with pytest.raises(mapping_client.MappingError):
         mapping_client.load(settings)
+
+
+def write(tmp_path, settings, raw):
+    (tmp_path / "anime_ids.json").write_text(json.dumps(raw), encoding="utf-8")
+    return mapping_client.load(settings)
+
+
+def test_two_anidb_rows_naming_one_anilist_id_prefer_the_one_with_a_mal_id(
+        tmp_path, settings):
+    """Only one row can win the key, and the MAL ID is the other half of the
+    ownership rule - a bare last-wins would pick arbitrarily."""
+    lookup = write(tmp_path, settings, {
+        "10": {"anilist_id": 500},
+        "11": {"anilist_id": 500, "mal_id": 900},
+    })
+
+    assert lookup[500]["mal_id"] == 900
+    assert lookup[500]["anidb_id"] == "11"
+
+
+def test_the_preference_holds_whichever_order_the_rows_appear_in(
+        tmp_path, settings):
+    lookup = write(tmp_path, settings, {
+        "11": {"anilist_id": 500, "mal_id": 900},
+        "10": {"anilist_id": 500},
+    })
+
+    assert lookup[500]["mal_id"] == 900
+    assert lookup[500]["anidb_id"] == "11"
+
+
+def test_with_nothing_to_choose_between_them_the_first_row_wins(
+        tmp_path, settings):
+    """Stable rather than arbitrary, so a mismatch is at least reproducible."""
+    lookup = write(tmp_path, settings, {
+        "10": {"anilist_id": 500},
+        "11": {"anilist_id": 500},
+    })
+
+    assert lookup[500]["anidb_id"] == "10"
