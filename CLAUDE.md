@@ -141,6 +141,13 @@ half-finished config is a normal "needs setup" state, not a startup failure
   `owned_anilist_ids` and `autobrr.is_now_owned` all go through it; the flags it
   feeds are rendered side by side, so a second copy would show up as the same
   row disagreeing with itself.
+- `compare_collections` admits a mapping row carrying *either* ID, matching that
+  rule — it used to require a MAL ID and drop the rest as unmapped, which threw
+  away ~1.5% of the Kometa file before matching ran. `entry_key` is the identity
+  those entries are deduped and diffed on: the MAL ID where there is one (so
+  stored payloads keep diffing unchanged), else a namespaced `anidb:<id>`. Don't
+  key on `mal_id` alone anywhere — AniDB-only rows all share the empty string,
+  so they collapse into one bucket rather than none.
 - `sequel_of_owned` reads `PREQUEL` edges (AniList IDs) and resolves them
   through the AniList-ID-keyed mapping into the Shoko sets, via
   `owned_anilist_ids`. `_relation_nodes` returns `(id, format)` from one walk

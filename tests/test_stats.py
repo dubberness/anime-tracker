@@ -13,7 +13,7 @@ from core.models import (
 
 
 def entry(rank, owned, score=80, year=2015, root=True, genres=None, mal=None,
-          sonarr=SONARR_UNKNOWN):
+          sonarr=SONARR_UNKNOWN, anidb=""):
     return Entry(
         rank=rank,
         title=f"Show {rank}",
@@ -23,8 +23,8 @@ def entry(rank, owned, score=80, year=2015, root=True, genres=None, mal=None,
         episodes=12,
         year=year,
         anilist_id=rank,
-        mal_id=mal or str(rank),
-        anidb_id="",
+        mal_id=str(rank) if mal is None else mal,
+        anidb_id=anidb,
         image="",
         owned=owned,
         is_franchise_root=root,
@@ -125,6 +125,38 @@ def test_diff_without_previous_data_is_empty():
     diff = stats_mod.build_diff([entry(1, True)], None)
     assert diff.has_previous is False
     assert diff.newly_owned == []
+
+
+def test_diff_keeps_anidb_only_entries_apart():
+    """They all carry an empty MAL ID, so keying on that alone put them in one
+    bucket: every one of them would diff against whichever was stored last."""
+    previous = [
+        {"mal_id": "", "anidb_id": "200", "owned": False},
+        {"mal_id": "", "anidb_id": "201", "owned": True},
+    ]
+    current = [
+        entry(1, True, mal="", anidb="200"),
+        entry(2, True, mal="", anidb="201"),
+    ]
+
+    diff = stats_mod.build_diff(current, previous)
+
+    # Only 200 changed. Keyed on mal_id alone, 201 wins the bucket and 200 is
+    # compared against it, so the genuine change reads as no change at all.
+    assert [d["anilist_id"] for d in diff.newly_owned] == [1]
+    assert diff.newly_tracked == []
+
+
+def test_diff_still_keys_on_mal_id_for_existing_payloads():
+    """An entry with a MAL ID keys on it exactly as before, so the first run
+    after this change doesn't report the whole list as newly tracked."""
+    previous = [{"mal_id": "1", "owned": False}]
+    current = [entry(1, True, mal="1", anidb="200")]
+
+    diff = stats_mod.build_diff(current, previous)
+
+    assert [d["mal_id"] for d in diff.newly_owned] == ["1"]
+    assert diff.newly_tracked == []
 
 
 def test_migration_stats():

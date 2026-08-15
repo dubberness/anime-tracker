@@ -422,6 +422,60 @@ def test_entries_without_a_mapping_are_skipped():
     assert [r.anilist_id for r in results] == [1]
 
 
+def test_a_mapping_with_only_an_anidb_id_is_still_tracked():
+    """Either ID is sufficient - the rule matches_shoko already applied.
+
+    Requiring a MAL ID here dropped the entry before matching ran, so a row the
+    mapping knows only by AniDB was reported as unmapped even though Shoko
+    could answer for it. About 1.5% of the Kometa file is such rows.
+    """
+    results = compare.compare_collections(
+        [media(1, 1)],
+        {1: {"anidb_id": "200"}},
+        mal_ids=set(), anidb_ids={"200"}, settings=_settings(),
+    )
+
+    assert [r.anilist_id for r in results] == [1]
+    assert results[0].owned is True
+    assert results[0].mal_id == ""
+
+
+def test_an_anidb_only_entry_that_shoko_lacks_reads_as_missing():
+    results = compare.compare_collections(
+        [media(1, 1)],
+        {1: {"anidb_id": "200"}},
+        mal_ids=set(), anidb_ids={"999"}, settings=_settings(),
+    )
+    assert results[0].owned is False
+
+
+def test_a_mapping_with_neither_id_is_still_skipped():
+    """No ID at all is genuinely unmatchable, and stays dropped."""
+    results = compare.compare_collections(
+        [media(1, 1), media(2, 2)],
+        {1: {"tvdb_id": "500"}, 2: {"mal_id": "2"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert [r.anilist_id for r in results] == [2]
+
+
+def test_several_anidb_only_entries_do_not_collapse_into_one():
+    """They share an empty MAL ID, so a bare mal_id key would keep only one."""
+    results = compare.compare_collections(
+        [media(1, 1), media(2, 2)],
+        {1: {"anidb_id": "200"}, 2: {"anidb_id": "201"}},
+        mal_ids=set(), anidb_ids=set(), settings=_settings(),
+    )
+    assert [r.anilist_id for r in results] == [1, 2]
+
+
+def test_entry_key_namespaces_anidb_so_it_cannot_collide_with_a_mal_id():
+    assert compare.entry_key("200", "999") == "200"
+    assert compare.entry_key("", "200") == "anidb:200"
+    assert compare.entry_key("200", "") != compare.entry_key("", "200")
+    assert compare.entry_key("", "") == ""
+
+
 def test_popularity_threshold_filters_entries():
     results = compare.compare_collections(
         [media(1, 1, popularity=10), media(2, 2, popularity=90000)],

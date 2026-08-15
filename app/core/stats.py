@@ -1,6 +1,6 @@
 """Aggregate statistics, tier breakdowns and run-over-run diffing."""
 
-from core.compare import shoko_only
+from core.compare import entry_key, shoko_only
 from core.models import SONARR_OWNED, SONARR_UNMAPPED, Diff
 
 
@@ -189,10 +189,17 @@ def build_diff(results, previous_entries):
         return diff
 
     diff.has_previous = True
-    previous_lookup = {str(p.get("mal_id")): p for p in previous_entries}
+    # Keyed the same way compare_collections dedupes, so an entry the mapping
+    # knows only by AniDB is matched to its own previous row rather than to
+    # whichever other keyless entry was stored last. Entries carrying a MAL ID
+    # key on it exactly as before, so an existing results.json still diffs
+    # cleanly against the first run after this change.
+    previous_lookup = {
+        entry_key(p.get("mal_id"), p.get("anidb_id")): p for p in previous_entries
+    }
 
     for result in results:
-        prev = previous_lookup.get(result.mal_id)
+        prev = previous_lookup.get(entry_key(result.mal_id, result.anidb_id))
 
         if prev is None:
             diff.newly_tracked.append(_summarise(result))

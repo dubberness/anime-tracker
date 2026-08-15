@@ -423,6 +423,28 @@ def matches_shoko(mal_id, anidb_id, mal_ids, anidb_ids):
     )
 
 
+def entry_key(mal_id, anidb_id):
+    """Stable identity for one tracked entry, within a run and across runs.
+
+    The MAL ID where there is one, which is what the list has always been keyed
+    on and what every stored results.json carries - so an existing payload
+    diffs against a new one unchanged. AniDB is the fallback for the rows the
+    mapping file knows only by that, namespaced so it can never collide with a
+    MAL ID.
+
+    Without the namespaced fallback every AniDB-only entry would key on the
+    empty string, which is one bucket rather than none: they would collapse
+    into a single tracked entry and the run-over-run diff would compare
+    whichever of them happened to be stored last.
+    """
+    mal_id = str(mal_id or "")
+    if mal_id:
+        return mal_id
+
+    anidb_id = str(anidb_id or "")
+    return "anidb:" + anidb_id if anidb_id else ""
+
+
 def owned_anilist_ids(mappings, mal_ids, anidb_ids):
     """AniList IDs whose mapping row resolves to something Shoko already has.
 
@@ -575,12 +597,17 @@ def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings,
     """Match the AniList list against the Shoko library, and against Sonarr."""
     log.info("Comparing %s AniList entries against the Shoko library", len(anilist))
 
-    by_mal = {}
+    by_key = {}
     unmapped = 0
 
     for media in anilist:
         mapping = mappings.get(int(media["id"]))
-        if not mapping or not mapping.get("mal_id"):
+        # Either ID is enough, which is the rule matches_shoko applies. Insisting
+        # on a MAL ID here threw the entry away before matching ever ran, so a
+        # row the mapping knows only by AniDB - about 1.5% of the file - was
+        # reported as having no usable mapping even though Shoko could have
+        # answered for it.
+        if not mapping or not (mapping.get("mal_id") or mapping.get("anidb_id")):
             unmapped += 1
             continue
 
@@ -594,11 +621,12 @@ def compare_collections(anilist, mappings, mal_ids, anidb_ids, settings,
                              local_by_anidb=local_by_anidb)
 
         # Several AniList entries can map to one MAL ID; keep the best-ranked.
-        existing = by_mal.get(entry.mal_id)
+        key = entry_key(entry.mal_id, entry.anidb_id)
+        existing = by_key.get(key)
         if existing is None or entry.rank < existing.rank:
-            by_mal[entry.mal_id] = entry
+            by_key[key] = entry
 
-    results = sorted(by_mal.values(), key=lambda e: e.rank)
+    results = sorted(by_key.values(), key=lambda e: e.rank)
     log.info("Tracked entries: %s (%s AniList entries had no usable mapping)",
              len(results), unmapped)
     return results
