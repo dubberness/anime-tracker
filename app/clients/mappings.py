@@ -89,6 +89,7 @@ def load(settings, force_download=False):
         raw = json.load(fh)
 
     lookup = {}
+    collisions = 0
     for anidb_id, value in raw.items():
         if not isinstance(value, dict):
             continue
@@ -105,7 +106,23 @@ def load(settings, force_download=False):
         # and matching silently falls back to MAL alone.
         entry = dict(value)
         entry.setdefault("anidb_id", str(anidb_id))
+
+        # Several AniDB rows can name the same AniList ID, and only one can
+        # win. Prefer whichever carries a MAL ID, since that is the other half
+        # of the ownership rule; otherwise keep the first and say how often it
+        # happened, because a silent last-wins picks an arbitrary AniDB ID and
+        # any mismatch it causes looks like a Shoko problem instead.
+        existing = lookup.get(key)
+        if existing is not None:
+            collisions += 1
+            if existing.get("mal_id") or not entry.get("mal_id"):
+                continue
+
         lookup[key] = entry
+
+    if collisions:
+        log.warning("%s mapping rows shared an AniList ID with another row - "
+                    "kept one apiece", collisions)
 
     log.info("Mappings loaded: %s AniList IDs in %.2fs",
              len(lookup), time.time() - started)

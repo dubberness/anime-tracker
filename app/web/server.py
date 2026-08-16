@@ -404,6 +404,7 @@ def _register_api(app, ctx):
         return jsonify({"logs": logging_setup.ring_handler.tail(limit)})
 
     @app.route("/api/run", methods=["POST"])
+    @_require_json
     def api_run():
         if ctx.state.is_running:
             return jsonify({"ok": False, "error": "A run is already in progress"}), 409

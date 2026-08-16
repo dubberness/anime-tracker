@@ -6,7 +6,7 @@ line-length = 100
 exclude = [".git", "__pycache__", ".venv", "venv"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "C4"]
+select = ["E", "W", "F", "I", "B", "C4", "BLE"]
 
 [tool.ruff.lint.per-file-ignores]
 # Logging has to be configured before the app modules import, so main.py and

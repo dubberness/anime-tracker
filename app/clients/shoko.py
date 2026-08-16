@@ -5,6 +5,14 @@ from logging_setup import get_logger
 
 log = get_logger(__name__)
 
+PAGE_SIZE = 100
+
+# Backstop for a Shoko build that ignores `page` and keeps handing back the
+# same batch: the loop's only other exit is an empty response, so without this
+# it spins forever and the list grows until the container is killed. At this
+# page size that is a 200,000-series ceiling, well past any real library.
+MAX_PAGES = 2000
+
 
 class ShokoClient:
     def __init__(self, settings, network):
@@ -21,6 +29,7 @@ class ShokoClient:
 
         series = []
         page = 1
+        total = None
 
         while True:
             data = request_with_retry(
@@ -28,17 +37,37 @@ class ShokoClient:
                 max_retries=self.network.max_retries,
                 backoff=self.network.initial_backoff_seconds,
                 timeout=self.network.timeout_seconds,
-                params={"page": page, "pageSize": 100},
+                params={"page": page, "pageSize": PAGE_SIZE},
                 headers=self._headers,
             )
 
-            batch = data.get("List", []) if isinstance(data, dict) else data
+            if isinstance(data, dict):
+                batch = data.get("List", [])
+                if total is None:
+                    total = data.get("Total")
+            else:
+                batch = data
+
             if not batch:
                 break
 
             series.extend(batch)
             if progress:
                 progress(f"Shoko page {page} ({len(series)} series)")
+
+            # Shoko reports the library size on every page, so the count is the
+            # cheapest exit - an empty final page is one wasted request, and on
+            # a build that ignores `page` it is the only exit that ever fires.
+            if total is not None and len(series) >= total:
+                break
+
+            if page >= MAX_PAGES:
+                log.warning(
+                    "Stopped reading Shoko at %s pages (%s series) - it kept "
+                    "returning data past the library size it reported",
+                    page, len(series),
+                )
+                break
 
             page += 1
 

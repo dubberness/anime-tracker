@@ -241,18 +241,29 @@ class Runner:
     # Autobrr tracking
     # ==========================
 
-    def _refresh_tracked(self, mappings, anilist):
+    def _refresh_tracked(self, mappings, anilist, airing=None):
         """Backfill IDs and titles onto rows tracked before they were known.
 
         A show tracked the week it was announced often has no mapping entry
         and a placeholder title. Both usually land within a run or two, and
         without this the stored row would keep the stale version forever.
+
+        The airing list is read alongside the ranked one because the rows this
+        exists for are exactly the ones the ranked list cannot see: seeded from
+        the upcoming season, with almost no popularity yet, and so nowhere near
+        the top `max_results`. Their IDs arrived either way through the mapping,
+        which is what pruning needs, but the title stayed a placeholder until
+        the show charted.
         """
         tracked = self.storage.list_autobrr_tracked()
         if not tracked:
             return
 
-        by_id = {int(m["id"]): m for m in anilist if m.get("id")}
+        by_id = {
+            int(m["id"]): m
+            for m in list(anilist) + list(airing or [])
+            if m.get("id")
+        }
         updated = 0
 
         for row in tracked:
@@ -398,7 +409,7 @@ class Runner:
         )
         shoko_episodes, episodes_suspect = compare.count_shoko_episodes(shoko_series)
 
-        self._refresh_tracked(mapping_lookup, anilist)
+        self._refresh_tracked(mapping_lookup, anilist, airing_media)
 
         # ---- Sonarr ----
         # Ahead of the comparison so every tracked entry can carry its Sonarr

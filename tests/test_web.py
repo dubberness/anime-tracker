@@ -596,6 +596,17 @@ def test_settings_post_requires_json(client):
     assert response.status_code == 415
 
 
+def test_run_requires_json(client, ctx):
+    """The same guard every other mutating endpoint carries.
+
+    Without it a form-encoded cross-origin POST - which needs no preflight -
+    could start a run, and this was the one mutation missing it.
+    """
+    configure(ctx)
+    response = client.post("/api/run", data="x=1")
+    assert response.status_code == 415
+
+
 def test_run_rejected_when_unconfigured(client):
     response = client.post("/api/run", json={})
     assert response.status_code == 400
@@ -770,3 +781,13 @@ def test_settings_rejects_a_bad_autobrr_url(client):
 def test_settings_rejects_an_out_of_range_seed_limit(client):
     response = client.post("/api/settings", json={"autobrr": {"auto_seed_limit": 99}})
     assert response.status_code == 400
+
+
+def test_settings_accepts_a_seed_limit_of_zero(client, ctx):
+    """0 is the documented off switch in auto_seed_candidates, so the validator
+    has to admit it - otherwise the only way to stop auto-seeding is to edit
+    config.json by hand."""
+    response = client.post("/api/settings", json={"autobrr": {"auto_seed_limit": 0}})
+
+    assert response.status_code == 200
+    assert ctx.config.settings.autobrr.auto_seed_limit == 0
