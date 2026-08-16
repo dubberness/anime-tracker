@@ -6,6 +6,7 @@ import re
 import pytest
 
 import config as config_mod
+from core import compare
 from main import AppContext
 from runner import Runner
 from state import RunState
@@ -399,6 +400,95 @@ def test_browsing_an_implausible_year_is_rejected(client, ctx):
     configure(ctx)
     assert client.get("/api/season/1200/WINTER").status_code == 400
     assert client.get("/api/season/3000/WINTER").status_code == 400
+
+
+def seed_season_cache(season, year, media):
+    """Prime the browsed-season cache so the endpoint never touches AniList.
+
+    The cache is the module's own seam for exactly this - a hit skips the
+    client entirely - so the request path below is the real one, minus the
+    network.
+    """
+    import web.server as server_mod
+
+    server_mod._season_cache.clear()
+    server_mod._season_cache_put(
+        season, year, {"popularity": media, "trending": [], "score": []}
+    )
+
+
+def test_browsing_a_season_after_a_run_returns_entries(client, ctx):
+    """The whole happy path of the picker.
+
+    Only ever reached once a run has populated Runner.lookups, which is why a
+    call to a function that never existed sat here undetected: both existing
+    season tests are rejected by the validators several lines earlier.
+    """
+    from runner import LookupContext
+
+    configure(ctx)
+    seed_season_cache("WINTER", 2020, [
+        {"id": 500, "title": {"english": "Browsed Show"}, "format": "TV",
+         "averageScore": 80, "popularity": 9000, "episodes": 12,
+         "status": "FINISHED", "startDate": {"year": 2020}},
+    ])
+    ctx.runner._store_lookups(LookupContext(mappings={}, mal_ids=set(),
+                                            anidb_ids=set()))
+
+    body = client.get("/api/season/2020/WINTER").get_json()
+
+    assert body["ok"] is True
+    assert body["ownership_known"] is True
+    assert [e["title"] for e in body["sorts"]["popularity"]] == ["Browsed Show"]
+
+
+def test_browsing_a_season_flags_a_new_season_of_something_owned(client, ctx):
+    """`sequel_of_owned` has to survive the trip through LookupContext.
+
+    It was silently always false here: build_season_entries was called without
+    owned_ids, so _build_entry had nothing to resolve the PREQUEL edge against.
+    """
+    from runner import LookupContext
+
+    configure(ctx)
+    seed_season_cache("WINTER", 2020, [
+        {"id": 500, "title": {"english": "Season Two"}, "format": "TV",
+         "averageScore": 80, "popularity": 9000, "episodes": 12,
+         "status": "FINISHED", "startDate": {"year": 2020},
+         "relations": {"edges": [
+             {"relationType": "PREQUEL",
+              "node": {"id": 400, "type": "ANIME", "format": "TV"}},
+         ]}},
+    ])
+    # AniList ID 400 is season one, and the mapping resolves it to a MAL ID
+    # Shoko holds - which is the only route from an AniList relation to the
+    # library, since Shoko never reports an AniList ID.
+    mappings = {400: {"mal_id": "4000", "anidb_id": ""}}
+    ctx.runner._store_lookups(LookupContext(
+        mappings=mappings,
+        mal_ids={"4000"},
+        anidb_ids=set(),
+        owned_ids=compare.owned_anilist_ids(mappings, {"4000"}, set()),
+    ))
+
+    entry = client.get("/api/season/2020/WINTER").get_json()["sorts"]["popularity"][0]
+    assert entry["sequel_of_owned"] is True
+
+
+def test_browsing_a_season_before_any_run_says_ownership_is_unknown(client, ctx):
+    """No lookups yet, so the page shows a dash rather than "missing"."""
+    configure(ctx)
+    seed_season_cache("WINTER", 2020, [
+        {"id": 500, "title": {"english": "Browsed Show"}, "format": "TV",
+         "averageScore": 80, "popularity": 9000, "episodes": 12,
+         "status": "FINISHED", "startDate": {"year": 2020}},
+    ])
+
+    body = client.get("/api/season/2020/WINTER").get_json()
+
+    assert body["ok"] is True
+    assert body["ownership_known"] is False
+    assert body["sorts"]["popularity"][0]["owned"] is False
 
 
 def test_airing_page_marks_tracked_shows_server_side(client, ctx):

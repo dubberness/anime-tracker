@@ -226,6 +226,13 @@ Shoko/Sonarr lookups at request time, so `Runner` holds a `LookupContext`
 between runs behind a lock. Don't move that into `results.json` — the browser
 downloads that whole payload on every Library load.
 
+`LookupContext` carries `owned_ids` alongside the raw ID sets even though it is
+derived from them: `build_season_entries` needs it to resolve PREQUEL edges, and
+recomputing it per request means walking every row of the mapping file. Pass it
+whenever calling `build_season_entries` — omitting it doesn't fail, it just
+makes `sequel_of_owned` silently false, which is how the picker shipped without
+the "New season" flag ever appearing.
+
 ## Conventions
 
 - `core/` modules are pure logic with no network/DB access — keep it that
